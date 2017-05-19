@@ -368,7 +368,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 HWND InitMonitorWindow()
 {
   const char * window_class_name =
-    "PowerMonitorWindow {4A6A9339-FA17-4324-93FC-EC92656FF058}";
+    "battstatus window {4A6A9339-FA17-4324-93FC-EC92656FF058}";
 
   WNDCLASS wc;
   wc.style         = CS_NOCLOSE;
