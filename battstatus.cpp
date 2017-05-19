@@ -114,12 +114,13 @@ string ACLineStatusStr(unsigned ACLineStatus)
 
 string BatteryFlagStr(unsigned BatteryFlag)
 {
-  /* "The value is zero if the battery is not being charged and the battery
-     capacity is between low and high."
-     Low is documented as < 33% and High documented as > 66%.
-     Empirical results show same. It is 0 when 33 <= percentage <= 66. */
+  /* BatteryFlag "value is zero if the battery is not being charged and the
+     battery capacity is between low and high." ie if 33 <= percentage <= 66.
+     Earlier revisions of this function showed 'Normal' instead of '<none>',
+     but that was less correct since technically 'Normal' is not a flag, and
+     things like 'Normal | Charging' would need to be handled. */
   if(BatteryFlag == 0)
-    return "Normal";
+    return "<none>";
 
   stringstream ss;
 #define EXTRACT_BATTERYFLAG(flag, name) \
