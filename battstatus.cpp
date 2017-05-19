@@ -1,20 +1,7 @@
 /*
 This program shows the system power status and monitors it for changes.
 
-g++ -std=c++11 -o battstatus battstatus.cpp -lpowrprof
-g++ -std=c++11 -DPREVENT_SLEEP -o prevent_sleep battstatus.cpp -lpowrprof
-
-PREVENT_SLEEP : Prevent the computer from sleeping.
-This doesn't seem to prevent a manual sleep (ie pressing the button)
-when unplugged and running on battery power. When the computer is plugged in
-though it will prevent manual sleep. Also, in either of those cases, the
-power status doesn't appear to change and therefore nothing is shown.
-To see all outstanding availability requests: powercfg /requests
-
-SHOW_ALL_WINDOW_MESSAGES : Show all messages received by the monitor window.
-Without this defined only WM_POWERBROADCAST messages are shown, by name.
-With this option all other messages are shown, but by hex.
-If you need to see all messages by name use Microsoft Spy++.
+g++ -std=c++11 -o battstatus battstatus.cpp -lntdll -lpowrprof
 
 *//*
 Copyright (C) 2017 Jay Satiro <raysatiro@yahoo.com>
@@ -37,6 +24,7 @@ GNU General Public License for more details.
 
 #include <windows.h>
 #include <powrprof.h>
+#include <ddk/ntddk.h>
 
 #include <assert.h>
 #include <limits.h>
@@ -61,6 +49,14 @@ GNU General Public License for more details.
 #define PBT_POWERSETTINGCHANGE 0x8013
 #endif
 
+#ifndef SPSF_BATTERYCHARGING
+#define SPSF_BATTERYCHARGING 8
+#endif
+
+#ifndef SPSF_BATTERYNOBATTERY
+#define SPSF_BATTERYNOBATTERY 128
+#endif
+
 /* Sample output at field width 22:
 ACLineStatus:         Offline
 BatteryFlag:          Low
@@ -72,6 +68,10 @@ Battery discharge:    -11433mW
 #define BATT_FIELD_WIDTH 22
 
 using namespace std;
+
+int verbose;
+bool prevent_sleep;
+RTL_OSVERSIONINFOW os;
 
 template <typename T>
 string UndocumentedValueStr(T undocumented_value)
@@ -132,8 +132,8 @@ string BatteryFlagStr(unsigned BatteryFlag)
   EXTRACT_BATTERYFLAG(1, "High");
   EXTRACT_BATTERYFLAG(2, "Low");
   EXTRACT_BATTERYFLAG(4, "Critical");
-  EXTRACT_BATTERYFLAG(8, "Charging");
-  EXTRACT_BATTERYFLAG(128, "No system battery");
+  EXTRACT_BATTERYFLAG(SPSF_BATTERYCHARGING, "Charging");
+  EXTRACT_BATTERYFLAG(SPSF_BATTERYNOBATTERY, "No system battery");
   EXTRACT_BATTERYFLAG(255, "Unknown status");
   if(BatteryFlag) {
     if(ss.tellp())
@@ -163,13 +163,6 @@ string SystemStatusFlagStr(unsigned SystemStatusFlag)
   case 1: return "Battery saver is on";
   }
   return UndocumentedValueStr(SystemStatusFlag);
-}
-
-/* SystemStatusFlag before Windows 10 "was previously reserved, named
-   Reserved1, and had a value of 0." */
-string Reserved1Str(BYTE Reserved1)
-{
-  return SystemStatusFlagStr(Reserved1);
 }
 
 /* Format the number of battery life seconds in the same format as the systray:
@@ -218,7 +211,13 @@ void ShowPowerStatus(const SYSTEM_POWER_STATUS *status)
   SHOW_STATUS(ACLineStatus);
   SHOW_STATUS(BatteryFlag);
   SHOW_STATUS(BatteryLifePercent);
-  //SHOW_STATUS(SystemStatusFlag);
+  /* SystemStatusFlag: "This flag and the GUID_POWER_SAVING_STATUS GUID were
+     introduced in Windows 10. This flag was previously reserved, named
+     Reserved1, and had a value of 0." */
+  if(os.dwMajorVersion >= 10) {
+    ss << left << setw(BATT_FIELD_WIDTH) << "SystemStatusFlag: "
+       << SystemStatusFlagStr(status->Reserved1) << "\n";
+  }
   SHOW_STATUS(BatteryLifeTime);
   /* "The system is only capable of estimating BatteryFullLifeTime based on
      calculations on BatteryLifeTime and BatteryLifePercent. Without smart
@@ -239,20 +238,40 @@ enum cpstype ComparePowerStatus(const SYSTEM_POWER_STATUS *a,
   COMPARE_STATUS(ACLineStatus);
   COMPARE_STATUS(BatteryFlag);
   COMPARE_STATUS(BatteryLifePercent);
-  //COMPARE_STATUS(SystemStatusFlag);
+  COMPARE_STATUS(Reserved1); // aka SystemStatusFlag
   COMPARE_STATUS(BatteryLifeTime);
   COMPARE_STATUS(BatteryFullLifeTime);
   return CPS_EQUAL;
 }
 
+/* Try to get the battery mW, ignore errors.
+Battery mW seems to only change when the power status changes.
+Rate: "The current rate of discharge of the battery, in mW. A nonzero, positive
+rate indicates charging; a negative rate indicates discharging. Some batteries
+report only discharging rates. This value should be treated as a LONG as it can
+contain negative values (with the high bit set)."
+However when some of my batteries charge the Rate is:
+0x80000000 == -2147483648 (LONG) == 2147483648 (DWORD)
+.. so I'm treating that value as 0.
+When my batteries are removed the Rate is 0.
+*/
+LONG GetBatteryMilliwatts()
+{
+  SYSTEM_BATTERY_STATE sbs;
+  if(CallNtPowerInformation(SystemBatteryState, NULL, 0, &sbs, sizeof sbs))
+    return 0;
+  return (sbs.Rate != 0x80000000) ? (LONG)sbs.Rate : 0;
+}
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-#ifdef SHOW_ALL_WINDOW_MESSAGES
-{
-  cout << hex << "WindowProc: msg 0x" << msg << ", wparam 0x" << wParam
-       << ", lparam 0x" << lParam << dec << endl;
-}
-#endif
+  if(verbose >= 3)
+  {
+    /* show all window messages */
+    cout << "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
+         << hex << "WindowProc: msg 0x" << msg << ", wparam 0x" << wParam
+         << ", lparam 0x" << lParam << dec << endl;
+  }
   switch(msg) {
   /* WM_POWERBROADCAST:
      "Notifies applications of a change in the power status of the computer,
@@ -384,22 +403,82 @@ HWND InitMonitorWindow()
   return hwnd;
 }
 
+void ShowUsage()
+{
+cerr <<
+"\nUsage: battstatus [-p] [-v[vv]]\n"
+"\n"
+"battstatus monitors your laptop battery for changes in state. By default it "
+"monitors WM_POWERBROADCAST messages and changes in the system power status "
+"to the battery charge status and percentage remaining.\n"
+"\n"
+"  -v\tMonitor and show all power status variables on any change.\n"
+"\n"
+"  -vv\t.. and show ??? (unused).\n"
+"\n"
+"  -vvv\t.. and show all window messages received by the monitor window.\n"
+"\tWindow messages other than WM_POWERBROADCAST are shown by hex.\n"
+"\n"
+"  -p\tPrevent Sleep: Prevent the computer from sleeping while monitoring.\n"
+"\tThis doesn't seem to prevent a manual sleep when unplugged and running on "
+"battery power. When the computer is plugged in though it will prevent manual "
+"sleep. Also, in either of those cases, the power status doesn't appear to "
+"change and therefore no update is shown. To see all outstanding availability "
+"requests: powercfg /requests\n"
+"\n"
+"Options combined into a single argument are the same as separate options, "
+"for example -pvv is the same as -p -v -v.\n";
+}
+
 int main(int argc, char *argv[])
 {
-#ifdef PREVENT_SLEEP
-  /* Away mode isn't always allowed and doesn't stop idle sleep so also use
-     ES_SYSTEM_REQUIRED: "Forces the system to be in the working state by
-     resetting the system idle timer." */
-  SetThreadExecutionState(ES_AWAYMODE_REQUIRED | ES_CONTINUOUS |
-                          ES_SYSTEM_REQUIRED);
-#endif
+  os.dwOSVersionInfoSize = sizeof os;
+  RtlGetVersion(&os);
+
+  for(int i = 1; i < argc; ++i) {
+    char *p = argv[i];
+    if(!strcmp(p, "--help")) {
+        ShowUsage();
+        exit(1);
+    }
+    if(*p != '-' && *p != '/') {
+      cerr << "Option parsing failed, expected '-' or '/': " << p << endl;
+      exit(1);
+    }
+    while(*++p) {
+      switch(*p) {
+      case 'h':
+      case '?':
+        ShowUsage();
+        exit(1);
+      case 'p':
+        prevent_sleep = true;
+        break;
+      case 'v':
+        ++verbose;
+        break;
+      default:
+        cerr << "Option parsing failed, unknown option: " << *p << endl;
+        exit(1);
+      }
+    }
+  }
+
+  if(prevent_sleep) {
+    /* Away mode isn't always allowed and doesn't stop idle sleep so also use
+       ES_SYSTEM_REQUIRED: "Forces the system to be in the working state by
+       resetting the system idle timer." */
+    SetThreadExecutionState(ES_AWAYMODE_REQUIRED | ES_CONTINUOUS |
+                            ES_SYSTEM_REQUIRED);
+  }
 
   HWND hwnd = InitMonitorWindow();
   if(!hwnd) {
     cerr << "InitMonitorWindow() failed." << endl;
     exit(1);
   }
-  cout << "Monitor window created. hwnd: " << hex << hwnd << dec << endl;
+  if(verbose >= 3)
+    cout << "Monitor window created. hwnd: " << hex << hwnd << dec << endl;
 
 #if 0 // testing purposes
   WindowProc(hwnd, WM_POWERBROADCAST,
@@ -425,34 +504,78 @@ int main(int argc, char *argv[])
       continue;
     }
 
-    if(ComparePowerStatus(&prev_status, &status) == CPS_EQUAL)
-      continue;
-
-    cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n";
-    ShowPowerStatus(&status);
-
-    /* Try to get the battery mW, ignore errors.
-       Battery mW seems to only change when the power status changes.
-       Rate: "The current rate of discharge of the battery, in mW. A nonzero,
-       positive rate indicates charging; a negative rate indicates discharging.
-       Some batteries report only discharging rates. This value should be
-       treated as a LONG as it can contain negative values (with the high bit
-       set)."
-       When my batteries charge the Rate is:
-       0x80000000 == -2147483648 (LONG) == 2147483648 (DWORD).
-       When my batteries are removed the Rate is 0.
-       */
-    SYSTEM_BATTERY_STATE sbs;
-    if(CallNtPowerInformation(SystemBatteryState, NULL, 0, &sbs, sizeof sbs) ==
-       STATUS_SUCCESS) {
-      LONG mW = (LONG)sbs.Rate;
-      if((mW & 0x7FFFFFFFL)) {
+    if(verbose) {
+      if(ComparePowerStatus(&prev_status, &status) == CPS_EQUAL)
+        continue;
+      cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n";
+      ShowPowerStatus(&status);
+      LONG mW = GetBatteryMilliwatts();
+      if(mW) {
         stringstream ss;
         ss << left << setw(BATT_FIELD_WIDTH)
            << (mW < 0 ? "Battery discharge: " : "Battery charge: ")
            << showpos << mW << "mW";
         cout << ss.str() << endl;
       }
+      cout << endl;
+      prev_status = status;
+      continue;
+    }
+
+    bool nobatt = !!(status.BatteryFlag & SPSF_BATTERYNOBATTERY);
+    bool prev_nobatt = !!(prev_status.BatteryFlag & SPSF_BATTERYNOBATTERY);
+    bool battsaver = status.Reserved1;
+    bool prev_battsaver = prev_status.Reserved1;
+    bool charging = !!(status.BatteryFlag & SPSF_BATTERYCHARGING);
+    bool prev_charging = !!(prev_status.BatteryFlag & SPSF_BATTERYCHARGING);
+
+    if(os.dwMajorVersion >= 10 && battsaver != prev_battsaver) {
+      cout << "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
+           << SystemStatusFlagStr(status.Reserved1) << endl;
+    }
+
+    /* continue if state is the same. note that battery time remaining isn't
+       checked here since it's much more volatile than percentage remaining.
+       it is checked in verbose mode though.
+       */
+    if(nobatt == prev_nobatt &&
+       charging == prev_charging &&
+       status.BatteryLifePercent == prev_status.BatteryLifePercent)
+      continue;
+
+    cout << "[" << TimeToLocalTimeStr(time(NULL)) << "]: ";
+    // Show the status in the same formats that the battery systray uses
+    if(nobatt) {
+      // eg: No battery is detected
+      cout << "No battery is detected" << endl;
+    }
+    else if(charging) {
+      // eg: 100% available (plugged in, charging)
+      cout << BatteryLifePercentStr(status.BatteryLifePercent)
+           << " available ("
+           << (status.ACLineStatus == 1 ? "plugged in, " : "")
+           << "charging)" << endl;
+    }
+    /* BatteryLifeTime is "–1 if remaining seconds are unknown or if the
+       device is connected to AC power." */
+    else if(status.BatteryLifeTime == (DWORD)-1) {
+      if(status.BatteryLifePercent == 100 && !GetBatteryMilliwatts()) {
+        // eg: Fully charged (100%)
+        cout << "Fully charged ("
+             << BatteryLifePercentStr(status.BatteryLifePercent) << ")"
+             << endl;
+      }
+      else {
+        // eg: 100% remaining
+        cout << BatteryLifePercentStr(status.BatteryLifePercent)
+             << " remaining" << endl;
+      }
+    }
+    else {
+      // eg: 27 min (15%) remaining
+      cout << BatteryLifeTimeStr(status.BatteryLifeTime) << " ("
+           << BatteryLifePercentStr(status.BatteryLifePercent)
+           << ") remaining" << endl;
     }
 
     prev_status = status;
