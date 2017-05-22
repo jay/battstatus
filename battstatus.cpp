@@ -205,10 +205,9 @@ string TimeToLocalTimeStr(time_t t)
 void ShowPowerStatus(const SYSTEM_POWER_STATUS *status)
 {
 #define SHOW_STATUS(item) \
-  ss << left << setw(BATT_FIELD_WIDTH) << #item ": " \
-     << item##Str(status->item) << "\n";
+  cout << left << setw(BATT_FIELD_WIDTH) << #item ": " \
+       << right << item##Str(status->item) << "\n";
 
-  stringstream ss;
   SHOW_STATUS(ACLineStatus);
   SHOW_STATUS(BatteryFlag);
   SHOW_STATUS(BatteryLifePercent);
@@ -216,8 +215,8 @@ void ShowPowerStatus(const SYSTEM_POWER_STATUS *status)
      introduced in Windows 10. This flag was previously reserved, named
      Reserved1, and had a value of 0." */
   if(os.dwMajorVersion >= 10) {
-    ss << left << setw(BATT_FIELD_WIDTH) << "SystemStatusFlag: "
-       << SystemStatusFlagStr(status->Reserved1) << "\n";
+    cout << left << setw(BATT_FIELD_WIDTH) << "SystemStatusFlag: "
+         << right << SystemStatusFlagStr(status->Reserved1) << "\n";
   }
   SHOW_STATUS(BatteryLifeTime);
   /* "The system is only capable of estimating BatteryFullLifeTime based on
@@ -225,7 +224,7 @@ void ShowPowerStatus(const SYSTEM_POWER_STATUS *status)
      battery subsystems, this value may not be accurate enough to be useful."
      */
   SHOW_STATUS(BatteryFullLifeTime);
-  cout << ss.str() << flush;
+  cout << flush;
 }
 
 enum cpstype { CPS_EQUAL, CPS_NOTEQUAL };
