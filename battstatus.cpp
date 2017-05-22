@@ -400,6 +400,13 @@ HWND InitMonitorWindow()
     return NULL;
   }
 
+  if(verbose >= 3) {
+    cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n"
+         << "Monitor window created.\n"
+         << "hwnd: " << hex << hwnd << dec << "\n"
+         << "name: \"" << window_class_name << "\"\n" << endl;
+  }
+
   return hwnd;
 }
 
@@ -477,8 +484,6 @@ int main(int argc, char *argv[])
     cerr << "InitMonitorWindow() failed." << endl;
     exit(1);
   }
-  if(verbose >= 3)
-    cout << "Monitor window created. hwnd: " << hex << hwnd << dec << endl;
 
 #if 0 // testing purposes
   WindowProc(hwnd, WM_POWERBROADCAST,
@@ -547,14 +552,14 @@ int main(int argc, char *argv[])
     // Show the status in the same formats that the battery systray uses
     if(nobatt) {
       // eg: No battery is detected
-      cout << "No battery is detected" << endl;
+      cout << "No battery is detected";
     }
     else if(charging) {
       // eg: 100% available (plugged in, charging)
       cout << BatteryLifePercentStr(status.BatteryLifePercent)
            << " available ("
            << (status.ACLineStatus == 1 ? "plugged in, " : "")
-           << "charging)" << endl;
+           << "charging)";
     }
     /* BatteryLifeTime is "–1 if remaining seconds are unknown or if the
        device is connected to AC power." */
@@ -562,21 +567,21 @@ int main(int argc, char *argv[])
       if(status.BatteryLifePercent == 100 && !GetBatteryMilliwatts()) {
         // eg: Fully charged (100%)
         cout << "Fully charged ("
-             << BatteryLifePercentStr(status.BatteryLifePercent) << ")"
-             << endl;
+             << BatteryLifePercentStr(status.BatteryLifePercent) << ")";
       }
       else {
         // eg: 100% remaining
         cout << BatteryLifePercentStr(status.BatteryLifePercent)
-             << " remaining" << endl;
+             << " remaining";
       }
     }
     else {
       // eg: 27 min (15%) remaining
       cout << BatteryLifeTimeStr(status.BatteryLifeTime) << " ("
            << BatteryLifePercentStr(status.BatteryLifePercent)
-           << ") remaining" << endl;
+           << ") remaining";
     }
+    cout << endl;
 
     prev_status = status;
   }
