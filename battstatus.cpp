@@ -547,6 +547,8 @@ int main(int argc, char *argv[])
     bool prev_battsaver = prev_status.Reserved1;
     bool charging = !!(status.BatteryFlag & SPSF_BATTERYCHARGING);
     bool prev_charging = !!(prev_status.BatteryFlag & SPSF_BATTERYCHARGING);
+    bool plugged_in = (status.ACLineStatus == 1);
+    bool prev_plugged_in = (prev_status.ACLineStatus == 1);
 
     if(os.dwMajorVersion >= 10 && battsaver != prev_battsaver) {
       cout << "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
@@ -558,6 +560,7 @@ int main(int argc, char *argv[])
        it is checked in verbose mode though. */
     if(nobatt == prev_nobatt &&
        charging == prev_charging &&
+       plugged_in == prev_plugged_in &&
        status.BatteryLifePercent == prev_status.BatteryLifePercent)
       continue;
 
@@ -571,7 +574,7 @@ int main(int argc, char *argv[])
       // eg: 100% available (plugged in, charging)
       cout << BatteryLifePercentStr(status.BatteryLifePercent)
            << " available ("
-           << (status.ACLineStatus == 1 ? "plugged in, " : "")
+           << (plugged_in ? "plugged in, " : "")
            << "charging)";
     }
     /* BatteryLifeTime is "-1 if remaining seconds are unknown or if the
