@@ -453,8 +453,8 @@ int main(int argc, char *argv[])
         ShowUsage();
         exit(1);
     }
-    if(*p != '-' && *p != '/') {
-      cerr << "Error: Option parsing failed, expected - or / : " << p << endl;
+    if(*p != '-') {
+      cerr << "Error: Option parsing failed, expected '-' : " << p << endl;
       exit(1);
     }
     while(*++p) {
