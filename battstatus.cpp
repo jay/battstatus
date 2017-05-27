@@ -406,7 +406,7 @@ HWND InitMonitorWindow()
     cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n"
          << "Monitor window created.\n"
          << "hwnd: " << hex << hwnd << dec << "\n"
-         << "name: \"" << window_class_name << "\"\n" << endl;
+         << "name: " << window_class_name << "\n" << endl;
   }
 
   return hwnd;
