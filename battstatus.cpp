@@ -156,6 +156,10 @@ string BatteryLifePercentStr(unsigned BatteryLifePercent)
   return ss.str();
 }
 
+/* SystemStatusFlag:
+"This flag and the GUID_POWER_SAVING_STATUS GUID were introduced in Windows 10.
+This flag was previously reserved, named Reserved1, and had a value of 0."
+*/
 string SystemStatusFlagStr(unsigned SystemStatusFlag)
 {
   switch(SystemStatusFlag)
@@ -167,7 +171,8 @@ string SystemStatusFlagStr(unsigned SystemStatusFlag)
 }
 
 /* Format the number of battery life seconds in the same format as the systray:
-   [1 hr ]01 min or "Unknown" if BatteryLifeTime is -1. */
+[1 hr ]01 min or "Unknown" if BatteryLifeTime is -1.
+*/
 string BatteryLifeTimeStr(DWORD BatteryLifeTime)
 {
   if(BatteryLifeTime == (DWORD)-1)
@@ -184,6 +189,11 @@ string BatteryLifeTimeStr(DWORD BatteryLifeTime)
   return ss.str();
 }
 
+/* BatteryFullLifeTime:
+"The system is only capable of estimating BatteryFullLifeTime based on
+calculations on BatteryLifeTime and BatteryLifePercent. Without smart battery
+subsystems, this value may not be accurate enough to be useful."
+*/
 string BatteryFullLifeTimeStr(DWORD BatteryFullLifeTime)
 {
   return BatteryLifeTimeStr(BatteryFullLifeTime);
@@ -211,18 +221,11 @@ void ShowPowerStatus(const SYSTEM_POWER_STATUS *status)
   SHOW_STATUS(ACLineStatus);
   SHOW_STATUS(BatteryFlag);
   SHOW_STATUS(BatteryLifePercent);
-  /* SystemStatusFlag: "This flag and the GUID_POWER_SAVING_STATUS GUID were
-     introduced in Windows 10. This flag was previously reserved, named
-     Reserved1, and had a value of 0." */
-  if(os.dwMajorVersion >= 10) {
+  if(os.dwMajorVersion >= 10) { /* SystemStatusFlag was added in Windows 10 */
     cout << left << setw(BATT_FIELD_WIDTH) << "SystemStatusFlag: "
          << right << SystemStatusFlagStr(status->Reserved1) << "\n";
   }
   SHOW_STATUS(BatteryLifeTime);
-  /* "The system is only capable of estimating BatteryFullLifeTime based on
-     calculations on BatteryLifeTime and BatteryLifePercent. Without smart
-     battery subsystems, this value may not be accurate enough to be useful."
-     */
   SHOW_STATUS(BatteryFullLifeTime);
   cout << flush;
 }
@@ -284,8 +287,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
      when the percentage of battery life drops below 10 percent, or if the
      battery life changes by 3 percent."
      Note this is a broadcast message and therefore not received by
-     message-only windows.
-     */
+     message-only windows. */
 #define CASE_PBT(item) \
   case item: cout << #item; break;
   case WM_POWERBROADCAST:
@@ -427,14 +429,17 @@ cerr <<
 "\tWindow messages other than WM_POWERBROADCAST are shown by hex.\n"
 "\n"
 "  -p\tPrevent Sleep: Prevent the computer from sleeping while monitoring.\n"
-"\tThis doesn't seem to prevent a manual sleep when unplugged and running on "
-"battery power. When the computer is plugged in though it will prevent manual "
-"sleep. Also, in either of those cases, the power status doesn't appear to "
-"change and therefore no update is shown. To see all outstanding availability "
-"requests: powercfg /requests\n"
+"\tThis option changes the monitor thread's power request state so that the "
+"system can stay in a working state (aka 'SYSTEM') and enter away mode "
+"(aka 'AWAYMODE') instead of true sleep. Note it doesn't seem to prevent a "
+"manual sleep initiated by the user when unplugged and running on battery "
+"power.\n"
 "\n"
 "Options combined into a single argument are the same as separate options, "
-"for example -pvv is the same as -p -v -v.\n";
+"for example -pvv is the same as -p -v -v.\n"
+"\n"
+"Also, Windows has its own diagnostics tool that is helpful: powercfg /?\n"
+;
 }
 
 int main(int argc, char *argv[])
@@ -449,7 +454,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
     if(*p != '-' && *p != '/') {
-      cerr << "Option parsing failed, expected '-' or '/': " << p << endl;
+      cerr << "Error: Option parsing failed, expected - or / : " << p << endl;
       exit(1);
     }
     while(*++p) {
@@ -465,16 +470,21 @@ int main(int argc, char *argv[])
         ++verbose;
         break;
       default:
-        cerr << "Option parsing failed, unknown option: " << *p << endl;
+        cerr << "Error: Option parsing failed, unknown option: " << *p << endl;
         exit(1);
       }
     }
   }
 
   if(prevent_sleep) {
-    /* Away mode isn't always allowed and doesn't stop idle sleep so also use
-       ES_SYSTEM_REQUIRED: "Forces the system to be in the working state by
-       resetting the system idle timer." */
+    /* "The SetThreadExecutionState function cannot be used to prevent the user
+       from putting the computer to sleep." However these flags below get us
+       pretty close. It's still possible if on battery power for the user to
+       manually initiate a true sleep though.
+       ES_AWAYMODE_REQUIRED - Use away mode (instead of true sleep).
+       ES_CONTINUOUS - Flags set here should remain in effect until next call.
+       ES_SYSTEM_REQUIRED - Reset system idle timer to force a working state.
+       */
     SetThreadExecutionState(ES_AWAYMODE_REQUIRED | ES_CONTINUOUS |
                             ES_SYSTEM_REQUIRED);
   }
@@ -512,6 +522,7 @@ int main(int argc, char *argv[])
     if(verbose) {
       if(ComparePowerStatus(&prev_status, &status) == CPS_EQUAL)
         continue;
+
       cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n";
       ShowPowerStatus(&status);
       LONG mW = GetBatteryMilliwatts();
@@ -541,8 +552,7 @@ int main(int argc, char *argv[])
 
     /* continue if state is the same. note that battery time remaining isn't
        checked here since it's much more volatile than percentage remaining.
-       it is checked in verbose mode though.
-       */
+       it is checked in verbose mode though. */
     if(nobatt == prev_nobatt &&
        charging == prev_charging &&
        status.BatteryLifePercent == prev_status.BatteryLifePercent)
