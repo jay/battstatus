@@ -485,8 +485,11 @@ int main(int argc, char *argv[])
        ES_CONTINUOUS - Flags set here should remain in effect until next call.
        ES_SYSTEM_REQUIRED - Reset system idle timer to force a working state.
        */
-    SetThreadExecutionState(ES_AWAYMODE_REQUIRED | ES_CONTINUOUS |
-                            ES_SYSTEM_REQUIRED);
+    if(!SetThreadExecutionState(ES_AWAYMODE_REQUIRED | ES_CONTINUOUS |
+                                ES_SYSTEM_REQUIRED)) {
+      cerr << "SetThreadExecutionState failed to prevent sleep." << endl;
+      exit(1);
+    }
   }
 
   HWND hwnd = InitMonitorWindow();
