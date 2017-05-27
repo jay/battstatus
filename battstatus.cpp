@@ -574,7 +574,7 @@ int main(int argc, char *argv[])
            << (status.ACLineStatus == 1 ? "plugged in, " : "")
            << "charging)";
     }
-    /* BatteryLifeTime is "–1 if remaining seconds are unknown or if the
+    /* BatteryLifeTime is "-1 if remaining seconds are unknown or if the
        device is connected to AC power." */
     else if(status.BatteryLifeTime == (DWORD)-1) {
       if(status.BatteryLifePercent == 100 && !GetBatteryMilliwatts()) {
