@@ -247,16 +247,100 @@ enum cpstype ComparePowerStatus(const SYSTEM_POWER_STATUS *a,
   return CPS_EQUAL;
 }
 
-/* Try to get the battery mW, ignore errors.
-Battery mW seems to only change when the power status changes.
-Rate: "The current rate of discharge of the battery, in mW. A nonzero, positive
-rate indicates charging; a negative rate indicates discharging. Some batteries
-report only discharging rates. This value should be treated as a LONG as it can
-contain negative values (with the high bit set)."
-However when some of my batteries charge the Rate is:
-0x80000000 == -2147483648 (LONG) == 2147483648 (DWORD)
-.. so I'm treating that value as 0.
-When my batteries are removed the Rate is 0.
+#define FUNC_SHOW_BOOL(item) \
+string item##Str(BOOL item) \
+{ \
+  stringstream ss; \
+  ss << (item == TRUE ? "TRUE" : \
+         (item == FALSE ? "FALSE" : \
+          UndocumentedValueStr(item))); \
+  return ss.str(); \
+}
+
+FUNC_SHOW_BOOL(AcOnLine);
+FUNC_SHOW_BOOL(BatteryPresent);
+FUNC_SHOW_BOOL(Charging);
+FUNC_SHOW_BOOL(Discharging);
+
+string mWhStr(DWORD mWh)
+{
+  stringstream ss;
+  ss << mWh << "mWh";;
+  return ss.str();
+}
+
+string MaxCapacityStr(DWORD MaxCapacity)
+{
+  return mWhStr(MaxCapacity);
+}
+
+string RemainingCapacityStr(DWORD RemainingCapacity)
+{
+  return mWhStr(RemainingCapacity);
+}
+
+string RateStr(DWORD Rate)
+{
+  /* Rate: "The current rate of discharge of the battery, in mW. A nonzero,
+     positive rate indicates charging; a negative rate indicates discharging.
+     Some batteries report only discharging rates. This value should be treated
+     as a LONG as it can contain negative values (with the high bit set)."
+     However when some of my batteries charge the Rate is:
+     0x80000000 == -2147483648 (LONG) == 2147483648 (DWORD)
+     When my batteries are removed the Rate is 0. */
+  if(!Rate || Rate == 0x80000000)
+    return "Unknown";
+
+  stringstream ss;
+  ss << showpos << (LONG)Rate << "mW";
+  return ss.str();
+}
+
+string EstimatedTimeStr(DWORD EstimatedTime)
+{
+  return BatteryLifeTimeStr(EstimatedTime);
+}
+
+/* DefaultAlert1:
+"The manufacturer's suggestion of a capacity, in mWh, at which a low battery
+alert should occur."
+*/
+string DefaultAlert1Str(DWORD DefaultAlert1)
+{
+  return mWhStr(DefaultAlert1);
+}
+
+/* DefaultAlert2:
+"The manufacturer's suggestion of a capacity, in mWh, at which a warning
+battery alert should occur."
+*/
+string DefaultAlert2Str(DWORD DefaultAlert2)
+{
+  return mWhStr(DefaultAlert2);
+}
+
+void ShowBatteryState(const SYSTEM_BATTERY_STATE *state)
+{
+#define SHOW_STATE(item) \
+  cout << left << setw(BATT_FIELD_WIDTH) << #item ": " \
+       << right << item##Str(state->item) << "\n";
+
+  SHOW_STATE(AcOnLine);
+  SHOW_STATE(BatteryPresent);
+  SHOW_STATE(Charging);
+  SHOW_STATE(Discharging);
+  SHOW_STATE(MaxCapacity);
+  SHOW_STATE(RemainingCapacity);
+  SHOW_STATE(Rate);
+  SHOW_STATE(EstimatedTime);
+  SHOW_STATE(DefaultAlert1);
+  SHOW_STATE(DefaultAlert2);
+  cout << flush;
+}
+
+/* Return the battery mW. Ignore errors: Don't show them and return 0.
+Battery mW is in SYSTEM_BATTERY_STATE which seems to be updated at the same
+time as SYSTEM_POWER_STATUS.
 */
 LONG GetBatteryMilliwatts()
 {
@@ -492,6 +576,39 @@ int main(int argc, char *argv[])
     }
   }
 
+  if(verbose) {
+    SYSTEM_BATTERY_STATE sbs = { 0, };
+    NTSTATUS status = CallNtPowerInformation(SystemBatteryState,
+                                             NULL, 0, &sbs, sizeof sbs);
+    if(status == STATUS_SUCCESS) {
+      cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n";
+      ShowBatteryState(&sbs);
+      if(verbose >= 3) {
+        cout << "DefaultAlert1 is the manufacturer's suggested alert level "
+                "for 'Low'.\n"
+                "DefaultAlert2 is the manufacturer's suggested alert level "
+                "for 'Warning'." << endl;
+      }
+    }
+    else {
+      cout << "Warning: CallNtPowerInformation failed to retrieve "
+              "SystemBatteryState with error code ";
+      switch(status) {
+      case STATUS_BUFFER_TOO_SMALL:
+        cout << "STATUS_BUFFER_TOO_SMALL";
+        break;
+      case STATUS_ACCESS_DENIED:
+        cout << "STATUS_ACCESS_DENIED";
+        break;
+      default:
+        cout << hex << "0x" << status << dec;
+        break;
+      }
+      cout << "." << endl;
+    }
+    cout << endl;
+  }
+
   HWND hwnd = InitMonitorWindow();
   if(!hwnd) {
     cerr << "InitMonitorWindow() failed." << endl;
@@ -528,14 +645,9 @@ int main(int argc, char *argv[])
 
       cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n";
       ShowPowerStatus(&status);
-      LONG mW = GetBatteryMilliwatts();
-      if(mW) {
-        stringstream ss;
-        ss << left << setw(BATT_FIELD_WIDTH)
-           << (mW < 0 ? "Battery discharge: " : "Battery charge: ")
-           << showpos << mW << "mW";
-        cout << ss.str() << endl;
-      }
+      cout << left << setw(BATT_FIELD_WIDTH) << "Battery Power Rate: "
+           << right << RateStr((DWORD)GetBatteryMilliwatts()) << "\n";
+
       cout << endl;
       prev_status = status;
       continue;
