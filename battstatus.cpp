@@ -212,6 +212,12 @@ string TimeToLocalTimeStr(time_t t)
   return buf;
 }
 
+#define TIMESTAMPED_HEADER \
+  "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n"
+
+#define TIMESTAMPED_PREFIX \
+  "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
+
 void ShowPowerStatus(const SYSTEM_POWER_STATUS *status)
 {
 #define SHOW_STATUS(item) \
@@ -355,7 +361,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
   if(verbose >= 3)
   {
     /* show all window messages */
-    cout << "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
+    cout << TIMESTAMPED_PREFIX
          << hex << "WindowProc: msg 0x" << msg << ", wparam 0x" << wParam
          << ", lparam 0x" << lParam << dec << endl;
   }
@@ -375,8 +381,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 #define CASE_PBT(item) \
   case item: cout << #item; break;
   case WM_POWERBROADCAST:
-    cout << "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
-         << "WM_POWERBROADCAST: ";
+    cout << TIMESTAMPED_PREFIX << "WM_POWERBROADCAST: ";
     switch(wParam) {
     CASE_PBT(PBT_APMQUERYSUSPEND);        /* 0x0000 */  /* Win2k & XP only */
     CASE_PBT(PBT_APMQUERYSTANDBY);        /* 0x0001 */  /* Win2k & XP only */
@@ -487,7 +492,7 @@ HWND InitMonitorWindow()
   }
 
   if(verbose >= 3) {
-    cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n"
+    cout << TIMESTAMPED_HEADER
          << "Monitor window created.\n"
          << "hwnd: " << hex << hwnd << dec << "\n"
          << "name: " << window_class_name << "\n" << endl;
@@ -581,7 +586,7 @@ int main(int argc, char *argv[])
     NTSTATUS status = CallNtPowerInformation(SystemBatteryState,
                                              NULL, 0, &sbs, sizeof sbs);
     if(status == STATUS_SUCCESS) {
-      cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n";
+      cout << TIMESTAMPED_HEADER;
       ShowBatteryState(&sbs);
       if(verbose >= 3) {
         cout << "DefaultAlert1 is the manufacturer's suggested alert level "
@@ -622,7 +627,8 @@ int main(int argc, char *argv[])
 #endif
 
   SYSTEM_POWER_STATUS prev_status = { 0, };
-  for(;; Sleep(100)) {
+  SYSTEM_POWER_STATUS status = { 0, };
+  for(;; Sleep(100), prev_status = status) {
     MSG msg;
     while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
       if(msg.message == WM_QUIT)
@@ -631,62 +637,61 @@ int main(int argc, char *argv[])
       DispatchMessage(&msg);
     }
 
-    SYSTEM_POWER_STATUS status;
     if(!GetSystemPowerStatus(&status)) {
       DWORD gle = GetLastError();
       cerr << "GetSystemPowerStatus() failed, GetLastError(): " << gle << endl;
+      status = prev_status;
       Sleep(1000);
       continue;
     }
 
+    /* in verbose mode show all changes to SYSTEM_POWER_STATUS */
     if(verbose) {
       if(ComparePowerStatus(&prev_status, &status) == CPS_EQUAL)
         continue;
 
-      cout << "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n";
+      cout << TIMESTAMPED_HEADER;
       ShowPowerStatus(&status);
       cout << left << setw(BATT_FIELD_WIDTH) << "Battery Power Rate: "
            << right << RateStr((DWORD)GetBatteryMilliwatts()) << "\n";
 
       cout << endl;
-      prev_status = status;
       continue;
     }
 
-    bool nobatt = !!(status.BatteryFlag & SPSF_BATTERYNOBATTERY);
-    bool prev_nobatt = !!(prev_status.BatteryFlag & SPSF_BATTERYNOBATTERY);
-    bool battsaver = status.Reserved1;
-    bool prev_battsaver = prev_status.Reserved1;
-    bool charging = !!(status.BatteryFlag & SPSF_BATTERYCHARGING);
-    bool prev_charging = !!(prev_status.BatteryFlag & SPSF_BATTERYCHARGING);
-    bool plugged_in = (status.ACLineStatus == 1);
-    bool prev_plugged_in = (prev_status.ACLineStatus == 1);
+    /* Default monitor mode.
+       Compare a subset of SYSTEM_POWER_STATUS to determine when the relevant
+       state has changed, in order to show an updated power status.
+       Note battery percent remaining is compared instead of time remaining
+       since the latter is volatile and could cause a lot of updates. */
 
-    if(os.dwMajorVersion >= 10 && battsaver != prev_battsaver) {
-      cout << "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
+#define BATTSAVER(status)   ((status).Reserved1 == 1)
+#define CHARGING(status)    (!!((status).BatteryFlag & SPSF_BATTERYCHARGING))
+#define NO_BATTERY(status)  (!!((status).BatteryFlag & SPSF_BATTERYNOBATTERY))
+#define PLUGGED_IN(status)  ((status).ACLineStatus == 1)
+
+    if(BATTSAVER(status) != BATTSAVER(prev_status)) {
+      cout << TIMESTAMPED_PREFIX
            << SystemStatusFlagStr(status.Reserved1) << endl;
     }
 
-    /* continue if state is the same. note that battery time remaining isn't
-       checked here since it's much more volatile than percentage remaining.
-       it is checked in verbose mode though. */
-    if(nobatt == prev_nobatt &&
-       charging == prev_charging &&
-       plugged_in == prev_plugged_in &&
-       status.BatteryLifePercent == prev_status.BatteryLifePercent)
+    if(status.BatteryLifePercent == prev_status.BatteryLifePercent &&
+       CHARGING(status) == CHARGING(prev_status) &&
+       NO_BATTERY(status) == NO_BATTERY(prev_status) &&
+       PLUGGED_IN(status) == PLUGGED_IN(prev_status))
       continue;
 
-    cout << "[" << TimeToLocalTimeStr(time(NULL)) << "]: ";
+    cout << TIMESTAMPED_PREFIX;
     // Show the status in the same formats that the battery systray uses
-    if(nobatt) {
+    if(NO_BATTERY(status)) {
       // eg: No battery is detected
       cout << "No battery is detected";
     }
-    else if(charging) {
+    else if(CHARGING(status)) {
       // eg: 100% available (plugged in, charging)
       cout << BatteryLifePercentStr(status.BatteryLifePercent)
            << " available ("
-           << (plugged_in ? "plugged in, " : "")
+           << (PLUGGED_IN(status) ? "plugged in, " : "")
            << "charging)";
     }
     /* BatteryLifeTime is "-1 if remaining seconds are unknown or if the
@@ -710,7 +715,5 @@ int main(int argc, char *argv[])
            << ") remaining";
     }
     cout << endl;
-
-    prev_status = status;
   }
 }
