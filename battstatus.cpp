@@ -212,9 +212,14 @@ string TimeToLocalTimeStr(time_t t)
   return buf;
 }
 
+/* The timestamp style in verbose mode:
+--- Sun May 28 07:00:55 PM ---
+text
+*/
 #define TIMESTAMPED_HEADER \
   "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n"
 
+/* The timestamp style in default mode: [Sun May 28 07:00:27 PM]: text */
 #define TIMESTAMPED_PREFIX \
   "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
 
@@ -581,6 +586,7 @@ int main(int argc, char *argv[])
     }
   }
 
+  /* in verbose mode show all SYSTEM_BATTERY_STATE members */
   if(verbose) {
     SYSTEM_BATTERY_STATE sbs = { 0, };
     NTSTATUS status = CallNtPowerInformation(SystemBatteryState,
@@ -670,7 +676,11 @@ int main(int argc, char *argv[])
 #define NO_BATTERY(status)  (!!((status).BatteryFlag & SPSF_BATTERYNOBATTERY))
 #define PLUGGED_IN(status)  ((status).ACLineStatus == 1)
 
-    if(BATTSAVER(status) != BATTSAVER(prev_status)) {
+    /* Check if the battery saver status has changed.
+       The battery saver status is available since Windows 10. It's stored in
+       member SystemStatus but older headers use the name Reserved1. */
+    if(os.dwMajorVersion >= 10 &&
+       BATTSAVER(status) != BATTSAVER(prev_status)) {
       cout << TIMESTAMPED_PREFIX
            << SystemStatusFlagStr(status.Reserved1) << endl;
     }
