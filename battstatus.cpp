@@ -307,6 +307,11 @@ string RateStr(DWORD Rate)
   return ss.str();
 }
 
+string RateStr(LONG Rate)
+{
+  return RateStr((DWORD)Rate);
+}
+
 string EstimatedTimeStr(DWORD EstimatedTime)
 {
   return BatteryLifeTimeStr(EstimatedTime);
@@ -349,11 +354,12 @@ void ShowBatteryState(const SYSTEM_BATTERY_STATE *state)
   cout << flush;
 }
 
-/* Return the battery mW. Ignore errors: Don't show them and return 0.
+/* Return the battery power rate in mW.
+Ignore errors: Don't show them and return 0.
 Battery mW is in SYSTEM_BATTERY_STATE which seems to be updated at the same
 time as SYSTEM_POWER_STATUS.
 */
-LONG GetBatteryMilliwatts()
+LONG GetBatteryPowerRate()
 {
   SYSTEM_BATTERY_STATE sbs;
   if(CallNtPowerInformation(SystemBatteryState, NULL, 0, &sbs, sizeof sbs))
@@ -659,7 +665,7 @@ int main(int argc, char *argv[])
       cout << TIMESTAMPED_HEADER;
       ShowPowerStatus(&status);
       cout << left << setw(BATT_FIELD_WIDTH) << "Battery Power Rate: "
-           << right << RateStr((DWORD)GetBatteryMilliwatts()) << "\n";
+           << right << RateStr(GetBatteryPowerRate()) << "\n";
 
       cout << endl;
       continue;
@@ -707,7 +713,7 @@ int main(int argc, char *argv[])
     /* BatteryLifeTime is "-1 if remaining seconds are unknown or if the
        device is connected to AC power." */
     else if(status.BatteryLifeTime == (DWORD)-1) {
-      if(status.BatteryLifePercent == 100 && !GetBatteryMilliwatts()) {
+      if(status.BatteryLifePercent == 100 && !GetBatteryPowerRate()) {
         // eg: Fully charged (100%)
         cout << "Fully charged ("
              << BatteryLifePercentStr(status.BatteryLifePercent) << ")";
