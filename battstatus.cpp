@@ -703,26 +703,27 @@ int main(int argc, char *argv[])
       // eg: No battery is detected
       cout << "No battery is detected";
     }
-    else if(CHARGING(status)) {
+    else if(status.BatteryLifePercent == 100 &&
+            status.BatteryLifeTime == (DWORD)-1 &&
+            PLUGGED_IN(status) &&
+            !CHARGING(status) &&
+            !GetBatteryPowerRate()) {
+      // eg: Fully charged (100%)
+      cout << "Fully charged (" << BatteryLifePercentStr(100) << ")";
+    }
+    else if(CHARGING(status) || PLUGGED_IN(status)) {
       // eg: 100% available (plugged in, charging)
+      // eg: 99% available (plugged in, not charging)
       cout << BatteryLifePercentStr(status.BatteryLifePercent)
-           << " available ("
-           << (PLUGGED_IN(status) ? "plugged in, " : "")
-           << "charging)";
+           << (GetBatteryPowerRate() < 0 ? " remaining" : " available") << " ("
+           << (PLUGGED_IN(status) ? "" : "not ") << "plugged in, "
+           << (CHARGING(status) ? "" : "not ") << "charging)";
     }
     /* BatteryLifeTime is "-1 if remaining seconds are unknown or if the
        device is connected to AC power." */
     else if(status.BatteryLifeTime == (DWORD)-1) {
-      if(status.BatteryLifePercent == 100 && !GetBatteryPowerRate()) {
-        // eg: Fully charged (100%)
-        cout << "Fully charged ("
-             << BatteryLifePercentStr(status.BatteryLifePercent) << ")";
-      }
-      else {
-        // eg: 100% remaining
-        cout << BatteryLifePercentStr(status.BatteryLifePercent)
-             << " remaining";
-      }
+      // eg: 100% remaining
+      cout << BatteryLifePercentStr(status.BatteryLifePercent) << " remaining";
     }
     else {
       // eg: 27 min (15%) remaining
