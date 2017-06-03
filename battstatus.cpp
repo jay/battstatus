@@ -147,7 +147,7 @@ string BatteryFlagStr(unsigned BatteryFlag)
 string BatteryLifePercentStr(unsigned BatteryLifePercent)
 {
   stringstream ss;
-  if(0 <= BatteryLifePercent && BatteryLifePercent <= 100)
+  if(BatteryLifePercent <= 100)
     ss << (DWORD)BatteryLifePercent << "%";
   else if(BatteryLifePercent == 255)
     ss << "Unknown status";
