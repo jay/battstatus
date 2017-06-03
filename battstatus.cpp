@@ -355,16 +355,20 @@ void ShowBatteryState(const SYSTEM_BATTERY_STATE *state)
 }
 
 /* Return the battery power rate in mW.
+A negative rate means discharging and a positive rate means charging.
+0 means neither charging nor discharging.
 Ignore errors: Don't show them and return 0.
-Battery mW is in SYSTEM_BATTERY_STATE which seems to be updated at the same
-time as SYSTEM_POWER_STATUS.
 */
 LONG GetBatteryPowerRate()
 {
+  /* Note SYSTEM_BATTERY_STATE seems to be updated by the OS at the same
+     frequency as SYSTEM_POWER_STATUS, which is not necessarily that often. */
   SYSTEM_BATTERY_STATE sbs;
   if(CallNtPowerInformation(SystemBatteryState, NULL, 0, &sbs, sizeof sbs))
     return 0;
-  return (sbs.Rate != 0x80000000) ? (LONG)sbs.Rate : 0;
+  /* As described in RateStr(), 0x80000000 is an invalid value and any other
+     value should be converted to LONG. */
+  return ((DWORD)sbs.Rate != 0x80000000) ? (LONG)sbs.Rate : 0;
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
