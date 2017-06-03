@@ -69,7 +69,7 @@ Battery discharge:    -11433mW
 
 using namespace std;
 
-int verbose;
+unsigned verbose;
 bool prevent_sleep;
 RTL_OSVERSIONINFOW os;
 
@@ -657,18 +657,18 @@ int main(int argc, char *argv[])
       continue;
     }
 
-    /* in verbose mode show all changes to SYSTEM_POWER_STATUS */
-    if(verbose) {
-      if(ComparePowerStatus(&prev_status, &status) == CPS_EQUAL)
-        continue;
+    bool full_status_shown = false;
 
+    /* in verbose mode if SYSTEM_POWER_STATUS has changed show it in full and
+       show the battery power rate */
+    if(verbose &&
+       ComparePowerStatus(&prev_status, &status) == CPS_NOTEQUAL) {
       cout << TIMESTAMPED_HEADER;
       ShowPowerStatus(&status);
       cout << left << setw(BATT_FIELD_WIDTH) << "Battery Power Rate: "
            << right << RateStr(GetBatteryPowerRate()) << "\n";
-
       cout << endl;
-      continue;
+      full_status_shown = true;
     }
 
     /* Default monitor mode.
@@ -691,7 +691,8 @@ int main(int argc, char *argv[])
            << SystemStatusFlagStr(status.Reserved1) << endl;
     }
 
-    if(status.BatteryLifePercent == prev_status.BatteryLifePercent &&
+    if(!full_status_shown &&
+       status.BatteryLifePercent == prev_status.BatteryLifePercent &&
        CHARGING(status) == CHARGING(prev_status) &&
        NO_BATTERY(status) == NO_BATTERY(prev_status) &&
        PLUGGED_IN(status) == PLUGGED_IN(prev_status))
