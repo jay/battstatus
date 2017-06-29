@@ -428,7 +428,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
        wParam == PBT_APMQUERYSTANDBY) {
       LPARAM unknown = (LPARAM)(lParam & ~1);
       if(lParam & 1) {
-        cout << "Bit 0 is on, user prompting/interaction is allowed.";
+        cout << "Bit 0 is on, User prompting/interaction is allowed.";
         if(unknown)
           cout << " | ";
       }
@@ -522,8 +522,7 @@ cerr <<
 "\nUsage: battstatus [-p] [-v[vv]]\n"
 "\n"
 "battstatus monitors your laptop battery for changes in state. By default it "
-"monitors WM_POWERBROADCAST messages and changes in the system power status "
-"to the battery charge status and percentage remaining.\n"
+"monitors WM_POWERBROADCAST messages and relevant changes in power status.\n"
 "\n"
 "  -v\tMonitor and show all power status variables on any change.\n"
 "\n"
@@ -542,7 +541,7 @@ cerr <<
 "Options combined into a single argument are the same as separate options, "
 "for example -pvv is the same as -p -v -v.\n"
 "\n"
-"Also, Windows has its own diagnostics tool that is helpful: powercfg /?\n"
+"The battstatus source can be found at http://jay.github.com/battstatus/\n"
 ;
 }
 
@@ -642,24 +641,31 @@ int main(int argc, char *argv[])
              0x44);//PBTF_APMRESUMEFROMFAILURE);
 #endif
 
+#define PROCESS_WINDOW_MESSAGES() \
+  for(MSG msg; PeekMessage(&msg, NULL, 0, 0, PM_REMOVE);) { \
+    if(msg.message == WM_QUIT) \
+      exit((int)msg.wParam); \
+    TranslateMessage(&msg); \
+    DispatchMessage(&msg); \
+  }
+
   SYSTEM_POWER_STATUS prev_status = { 0, };
   SYSTEM_POWER_STATUS status = { 0, };
   for(;; Sleep(100), prev_status = status) {
-    MSG msg;
-    while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-      if(msg.message == WM_QUIT)
-        exit((int)msg.wParam);
-      TranslateMessage(&msg);
-      DispatchMessage(&msg);
-    }
+    PROCESS_WINDOW_MESSAGES();
 
     if(!GetSystemPowerStatus(&status)) {
       DWORD gle = GetLastError();
       cerr << "GetSystemPowerStatus() failed, GetLastError(): " << gle << endl;
       status = prev_status;
-      Sleep(1000);
+      for(int i = 0; i < 10; ++i) {
+        Sleep(100);
+        PROCESS_WINDOW_MESSAGES();
+      }
       continue;
     }
+
+    PROCESS_WINDOW_MESSAGES();
 
     bool full_status_shown = false;
 
