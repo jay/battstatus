@@ -171,7 +171,7 @@ string SystemStatusFlagStr(unsigned SystemStatusFlag)
 }
 
 /* Format the number of battery life seconds in the same format as the systray:
-[1 hr ]01 min or "Unknown" if BatteryLifeTime is -1.
+1 hr 01 min; 1 hr 00 min; 1 min or "Unknown" if BatteryLifeTime is -1.
 */
 string BatteryLifeTimeStr(DWORD BatteryLifeTime)
 {
@@ -182,10 +182,11 @@ string BatteryLifeTimeStr(DWORD BatteryLifeTime)
   DWORD minutes = (BatteryLifeTime % 3600) / 60;
 
   stringstream ss;
-  if(hours)
-    ss << hours << " hr ";
-  ss.fill('0');
-  ss << setw(2) << minutes << " min";
+  if(hours) {
+    ss << hours << " hr " << setw(2);
+    ss.fill('0');
+  }
+  ss << minutes << " min";
   return ss.str();
 }
 
