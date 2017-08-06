@@ -1,8 +1,22 @@
-/*
-This program shows the system power status and monitors it for changes.
+/* battstatus - Monitor the Windows battery status for changes in state
+
+Sample output:
+
+[Wed Aug 02 12:15:55 PM]: 5 hr 30 min (99%) remaining
+[Wed Aug 02 12:17:38 PM]: WM_POWERBROADCAST: PBT_APMPOWERSTATUSCHANGE
+[Wed Aug 02 12:17:38 PM]: 99% available (plugged in, not charging)
+[Wed Aug 02 12:17:44 PM]: Fully charged (100%)
+[Wed Aug 02 12:41:50 PM]: WM_POWERBROADCAST: PBT_APMPOWERSTATUSCHANGE
+[Wed Aug 02 12:41:50 PM]: 99% remaining
+[Wed Aug 02 12:45:14 PM]: 8 hr 13 min (98%) remaining
+[Wed Aug 02 12:49:39 PM]: 7 hr 37 min (97%) remaining
+
+It can optionally show verbose information and prevent sleep. Use option --help
+to see the usage information.
 
 g++ -std=c++11 -o battstatus battstatus.cpp -lntdll -lpowrprof
 
+https://github.com/jay/battstatus
 *//*
 Copyright (C) 2017 Jay Satiro <raysatiro@yahoo.com>
 All rights reserved.
@@ -542,7 +556,7 @@ cerr <<
 "Options combined into a single argument are the same as separate options, "
 "for example -pvv is the same as -p -v -v.\n"
 "\n"
-"The battstatus source can be found at http://jay.github.com/battstatus/\n"
+"The battstatus source can be found at https://github.com/jay/battstatus\n"
 ;
 }
 
