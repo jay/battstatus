@@ -14,7 +14,8 @@ Sample output:
 It can optionally show verbose information and prevent sleep. Use option --help
 to see the usage information.
 
-g++ -std=c++11 -o battstatus battstatus.cpp -lntdll -lpowrprof
+cl /W4 /wd4127 battstatus.cpp user32.lib powrprof.lib
+g++ -Wall -std=c++11 -o battstatus battstatus.cpp -lpowrprof
 
 https://github.com/jay/battstatus
 *//*
@@ -36,9 +37,26 @@ GNU General Public License for more details.
 
 #define _WIN32_WINNT 0x0501
 
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+
+#define WIN32_NO_STATUS
 #include <windows.h>
-#include <powrprof.h>
+#undef WIN32_NO_STATUS
+
+#ifdef __MINGW32__
+#include <_mingw.h>
+#ifdef __MINGW64_VERSION_MAJOR
+#include <ntstatus.h>
+#else
 #include <ddk/ntddk.h>
+#endif
+#else
+#include <ntstatus.h>
+#endif
+
+#include <powrprof.h>
 
 #include <assert.h>
 #include <limits.h>
@@ -562,6 +580,10 @@ cerr <<
 
 int main(int argc, char *argv[])
 {
+  NTSTATUS (NTAPI *RtlGetVersion)(RTL_OSVERSIONINFOW *lpVersionInformation) =
+    (NTSTATUS (NTAPI *)(RTL_OSVERSIONINFOW *))
+    GetProcAddress(GetModuleHandleW(L"ntdll"), "RtlGetVersion");
+
   os.dwOSVersionInfoSize = sizeof os;
   RtlGetVersion(&os);
 
