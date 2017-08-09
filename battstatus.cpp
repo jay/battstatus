@@ -309,18 +309,20 @@ FUNC_SHOW_BOOL(Discharging);
 string mWhStr(DWORD mWh)
 {
   stringstream ss;
-  ss << mWh << "mWh";;
+  ss << mWh << "mWh";
   return ss.str();
 }
 
 string MaxCapacityStr(DWORD MaxCapacity)
 {
-  return mWhStr(MaxCapacity);
+  // capacity may be relative, refer to RateStr comment
+  return mWhStr(MaxCapacity) + " (or relative)";
 }
 
 string RemainingCapacityStr(DWORD RemainingCapacity)
 {
-  return mWhStr(RemainingCapacity);
+  // capacity may be relative, refer to RateStr comment
+  return mWhStr(RemainingCapacity) + " (or relative)";
 }
 
 string RateStr(DWORD Rate)
@@ -335,8 +337,20 @@ string RateStr(DWORD Rate)
   if(!Rate || Rate == 0x80000000)
     return "Unknown";
 
+  /* Relative capacity and rate:
+     The Rate provided to this function is from SYSTEM_BATTERY_STATE and is as
+     documented in the comment block above. However according to
+     BATTERY_INFORMATION documentation the capacity and rate information
+     reported by a battery may be relative, with all rate information reported
+     in units per hour.
+     "If [flag BATTERY_CAPACITY_RELATIVE] is set, all references to units in
+     the other battery documentation can be ignored."
+     That's currently beyond the scope of this program which only works with
+     the battery status as a whole and does not track individual batteries.
+     Instead we do what Microsoft's pwrtest does and append " (or relative)".
+     https://msdn.microsoft.com/en-us/library/windows/desktop/aa372661.aspx */
   stringstream ss;
-  ss << showpos << (LONG)Rate << "mW";
+  ss << showpos << (LONG)Rate << "mW (or relative)";
   return ss.str();
 }
 
@@ -356,7 +370,8 @@ alert should occur."
 */
 string DefaultAlert1Str(DWORD DefaultAlert1)
 {
-  return mWhStr(DefaultAlert1);
+  // capacity may be relative, refer to RateStr comment
+  return mWhStr(DefaultAlert1) + " (or relative)";
 }
 
 /* DefaultAlert2:
@@ -365,7 +380,8 @@ battery alert should occur."
 */
 string DefaultAlert2Str(DWORD DefaultAlert2)
 {
-  return mWhStr(DefaultAlert2);
+  // capacity may be relative, refer to RateStr comment
+  return mWhStr(DefaultAlert2) + " (or relative)";
 }
 
 void ShowBatteryState(const SYSTEM_BATTERY_STATE *state)
