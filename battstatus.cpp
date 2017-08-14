@@ -646,6 +646,10 @@ int main(int argc, char *argv[])
       cerr << "SetThreadExecutionState failed to prevent sleep." << endl;
       exit(1);
     }
+    if(verbose) {
+      cout << "The thread execution state has been changed to prevent sleep."
+           << endl;
+    }
   }
 
   /* in verbose mode show all SYSTEM_BATTERY_STATE members */
