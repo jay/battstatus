@@ -105,6 +105,10 @@ unsigned verbose;
 bool prevent_sleep;
 RTL_OSVERSIONINFOW os;
 
+/* There are certain times when the battery lifetime should be suppressed, such
+   as when the computer just woke up. */
+bool suppress_lifetime;
+
 template <typename T>
 string UndocumentedValueStr(T undocumented_value)
 {
@@ -176,12 +180,15 @@ string BatteryFlagStr(unsigned BatteryFlag)
   return ss.str();
 }
 
+/* BatteryLifePercent is "255 if status is unknown." */
+#define PERCENT_UNKNOWN ((BYTE)255)
+
 string BatteryLifePercentStr(unsigned BatteryLifePercent)
 {
   stringstream ss;
   if(BatteryLifePercent <= 100)
     ss << (DWORD)BatteryLifePercent << "%";
-  else if(BatteryLifePercent == 255)
+  else if(BatteryLifePercent == PERCENT_UNKNOWN)
     ss << "Unknown status";
   else
     ss << UndocumentedValueStr(BatteryLifePercent);
@@ -202,12 +209,16 @@ string SystemStatusFlagStr(unsigned SystemStatusFlag)
   return UndocumentedValueStr(SystemStatusFlag);
 }
 
+/* BatteryLifeTime is "-1 if remaining seconds are unknown or if the device
+   is connected to AC power." */
+#define LIFETIME_UNKNOWN ((DWORD)-1)
+
 /* Format the number of battery life seconds in the same format as the systray:
-1 hr 01 min; 1 hr 00 min; 1 min or "Unknown" if BatteryLifeTime is -1.
+1 hr 01 min; 1 hr 00 min; 1 min or "Unknown" if LIFETIME_UNKNOWN.
 */
 string BatteryLifeTimeStr(DWORD BatteryLifeTime)
 {
-  if(BatteryLifeTime == (DWORD)-1)
+  if(BatteryLifeTime == LIFETIME_UNKNOWN)
     return "Unknown";
 
   DWORD hours = BatteryLifeTime / 3600;
@@ -596,12 +607,36 @@ cerr <<
 
 int main(int argc, char *argv[])
 {
+  NTSTATUS ntstatus;
+
+  /* RtlGetVersion retrieves the real OS info */
   NTSTATUS (NTAPI *RtlGetVersion)(RTL_OSVERSIONINFOW *lpVersionInformation) =
     (NTSTATUS (NTAPI *)(RTL_OSVERSIONINFOW *))
     GetProcAddress(GetModuleHandleW(L"ntdll"), "RtlGetVersion");
 
   os.dwOSVersionInfoSize = sizeof os;
-  RtlGetVersion(&os);
+  ntstatus = RtlGetVersion(&os);
+  if(ntstatus != STATUS_SUCCESS) {
+    cerr << "Error: RtlGetVersion failed, error 0x" << hex << ntstatus << endl;
+    exit(1);
+  }
+
+  /* NtQueryTimerResolution retrieves the OS timer resolutions as 100ns units
+     of interrupt. Note that the minimum timer resolution is equal to the
+     maximum timer interval, and vice versa. */
+  NTSTATUS (NTAPI *NtQueryTimerResolution)(ULONG *MinimumResolution,
+                                           ULONG *MaximumResolution,
+                                           ULONG *ActualResolution) =
+    (NTSTATUS (NTAPI *)(ULONG *, ULONG *, ULONG *))
+    GetProcAddress(GetModuleHandleW(L"ntdll"), "NtQueryTimerResolution");
+
+  ULONG MaximumTimerInterval, unused, unused2;
+  ntstatus = NtQueryTimerResolution(&MaximumTimerInterval, &unused, &unused2);
+  if(ntstatus != STATUS_SUCCESS) {
+    cerr << "Error: NtQueryTimerResolution failed, error 0x" << hex << ntstatus
+         << endl;
+    exit(1);
+  }
 
   for(int i = 1; i < argc; ++i) {
     char *p = argv[i];
@@ -655,9 +690,9 @@ int main(int argc, char *argv[])
   /* in verbose mode show all SYSTEM_BATTERY_STATE members */
   if(verbose) {
     SYSTEM_BATTERY_STATE sbs = { 0, };
-    NTSTATUS status = CallNtPowerInformation(SystemBatteryState,
-                                             NULL, 0, &sbs, sizeof sbs);
-    if(status == STATUS_SUCCESS) {
+    NTSTATUS ntstatus = CallNtPowerInformation(SystemBatteryState,
+                                               NULL, 0, &sbs, sizeof sbs);
+    if(ntstatus == STATUS_SUCCESS) {
       cout << TIMESTAMPED_HEADER;
       ShowBatteryState(&sbs);
       if(verbose >= 3) {
@@ -670,7 +705,7 @@ int main(int argc, char *argv[])
     else {
       cout << "Warning: CallNtPowerInformation failed to retrieve "
               "SystemBatteryState with error code ";
-      switch(status) {
+      switch(ntstatus) {
       case STATUS_BUFFER_TOO_SMALL:
         cout << "STATUS_BUFFER_TOO_SMALL";
         break;
@@ -678,7 +713,7 @@ int main(int argc, char *argv[])
         cout << "STATUS_ACCESS_DENIED";
         break;
       default:
-        cout << hex << "0x" << status << dec;
+        cout << hex << "0x" << ntstatus << dec;
         break;
       }
       cout << "." << endl;
@@ -708,6 +743,7 @@ int main(int argc, char *argv[])
 
   SYSTEM_POWER_STATUS prev_status = { 0, };
   SYSTEM_POWER_STATUS status = { 0, };
+
   for(;; Sleep(100), prev_status = status) {
     PROCESS_WINDOW_MESSAGES();
 
@@ -738,10 +774,77 @@ int main(int argc, char *argv[])
       full_status_shown = true;
     }
 
+    /* Suppress the battery lifetime if less than 'span_minutes' has passed
+       since the computer woke up. The battery systray behaves similar but its
+       logic for this appears to be more complex. For example, sometimes it can
+       wait just a minute to show the lifetime and sometimes it can wait five
+       minutes. And those variations do not appear be dependent on percentage,
+       which may not have changed in the interim. */
+    {
+      const unsigned span_minutes = 3;
+
+      ULONGLONG lastwake;
+      NTSTATUS ntstatus = CallNtPowerInformation(LastWakeTime, NULL, 0,
+                                                 &lastwake, sizeof lastwake);
+      if(ntstatus == STATUS_SUCCESS) {
+        static ULONGLONG ignore_this_waketime = (ULONGLONG)-1;
+
+        /* Ignore the first retrieved waketime since it most likely occurred
+           before this program was started. */
+        if(ignore_this_waketime == (ULONGLONG)-1)
+          ignore_this_waketime = lastwake;
+
+        if(ignore_this_waketime != lastwake) {
+          /* Convert lastwake to milliseconds.  mt is a generous number of
+             100ns units of interrupt to remove from lastwake before the
+             conversion, without which GetTickCount could come before it:
+             GetTickCount: 76815265   <--- less granularity, it hasn't updated
+             Unadjusted lastwake in milliseconds: 76815269
+             For now put aside the issue of GetTickCount wraparound at
+             49d17h2m47s which has to be handled some other way. */
+          ULONGLONG mt = (MaximumTimerInterval * 2) + 10000;
+          DWORD waketick =
+            (DWORD)((lastwake > mt ? lastwake - mt : 0) / 10000);
+          DWORD elapsed_minutes = (GetTickCount() - waketick) / 1000 / 60;
+
+          if(elapsed_minutes < span_minutes) {
+            static ULONGLONG prev_lastwake = (ULONGLONG)-1;
+
+            suppress_lifetime = !verbose;
+
+            if(full_status_shown || prev_lastwake != lastwake) {
+              prev_lastwake = lastwake;
+
+              stringstream ss;
+              ss << TIMESTAMPED_PREFIX;
+              const string &timestamp = ss.str();
+
+              cout << timestamp
+                   << "Recently resumed, battery lifetime is inaccurate."
+                   << endl;
+
+              if(suppress_lifetime) {
+                cout << timestamp
+                     << "Temporarily ignoring lifetime." << endl;
+              }
+            }
+          }
+          else {
+            ignore_this_waketime = lastwake;
+            suppress_lifetime = false;
+          }
+        }
+        else
+          suppress_lifetime = false;
+      }
+      else
+        suppress_lifetime = false;
+    }
+
     /* Default monitor mode.
        Compare a subset of SYSTEM_POWER_STATUS to determine when the relevant
-       state has changed, in order to show an updated power status.
-       Note battery percent remaining is compared instead of time remaining
+       state has changed, in order to show updated power status one-liners.
+       Note battery percent remaining is compared instead of lifetime
        since the latter is volatile and could cause a lot of updates. */
 
 #define BATTSAVER(status)   ((status).Reserved1 == 1)
@@ -765,6 +868,8 @@ int main(int argc, char *argv[])
        PLUGGED_IN(status) == PLUGGED_IN(prev_status))
       continue;
 
+    /* The status has changed enough to show the one-liner output. */
+
     cout << TIMESTAMPED_PREFIX;
     // Show the status in the same formats that the battery systray uses
     if(NO_BATTERY(status)) {
@@ -772,7 +877,8 @@ int main(int argc, char *argv[])
       cout << "No battery is detected";
     }
     else if(status.BatteryLifePercent == 100 &&
-            status.BatteryLifeTime == (DWORD)-1 &&
+            (suppress_lifetime ||
+             status.BatteryLifeTime == LIFETIME_UNKNOWN) &&
             PLUGGED_IN(status) &&
             !CHARGING(status) &&
             !GetBatteryPowerRate()) {
@@ -787,17 +893,16 @@ int main(int argc, char *argv[])
            << (PLUGGED_IN(status) ? "" : "not ") << "plugged in, "
            << (CHARGING(status) ? "" : "not ") << "charging)";
     }
-    /* BatteryLifeTime is "-1 if remaining seconds are unknown or if the
-       device is connected to AC power." */
-    else if(status.BatteryLifeTime == (DWORD)-1) {
-      // eg: 100% remaining
-      cout << BatteryLifePercentStr(status.BatteryLifePercent) << " remaining";
-    }
-    else {
+    else if(!suppress_lifetime &&
+            status.BatteryLifeTime != LIFETIME_UNKNOWN) {
       // eg: 27 min (15%) remaining
       cout << BatteryLifeTimeStr(status.BatteryLifeTime) << " ("
            << BatteryLifePercentStr(status.BatteryLifePercent)
            << ") remaining";
+    }
+    else {
+      // eg: 100% remaining
+      cout << BatteryLifePercentStr(status.BatteryLifePercent) << " remaining";
     }
     cout << endl;
   }
