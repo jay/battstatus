@@ -62,6 +62,7 @@ GNU General Public License for more details.
 #include <limits.h>
 #include <stdio.h>
 
+#include <deque>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -89,6 +90,12 @@ GNU General Public License for more details.
 #define SPSF_BATTERYNOBATTERY 128
 #endif
 
+// Bool macros for SYSTEM_POWER_STATUS
+#define BATTSAVER(status)   ((status).Reserved1 == 1)
+#define CHARGING(status)    (!!((status).BatteryFlag & SPSF_BATTERYCHARGING))
+#define NO_BATTERY(status)  (!!((status).BatteryFlag & SPSF_BATTERYNOBATTERY))
+#define PLUGGED_IN(status)  ((status).ACLineStatus == 1)
+
 /* Sample output at field width 22:
 ACLineStatus:         Offline
 BatteryFlag:          Low
@@ -104,6 +111,11 @@ using namespace std;
 unsigned verbose;
 bool prevent_sleep;
 RTL_OSVERSIONINFOW os;
+
+/* There are certain times when the battery charge state should be suppressed,
+   such as when it continually changes in a short period of time and verbose
+   mode is disabled. */
+bool suppress_charge_state;
 
 /* There are certain times when the battery lifetime should be suppressed, such
    as when the computer just woke up. */
@@ -447,15 +459,41 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
      this event when remaining battery power slips below the threshold
      specified by the user or if the battery power changes by a specified
      percentage."
-     ...and in remarks:
+     PBT_APMPOWERSTATUSCHANGE:
      "This event can occur when battery life drops to less than 5 minutes, or
      when the percentage of battery life drops below 10 percent, or if the
      battery life changes by 3 percent."
      Note this is a broadcast message and therefore not received by
      message-only windows. */
+  case WM_POWERBROADCAST:
+
+    if(wParam == PBT_APMPOWERSTATUSCHANGE) {
+      static SYSTEM_POWER_STATUS status, prev_status;
+      prev_status = status;
+
+      if(GetSystemPowerStatus(&status)) {
+#if 0
+        cout << "PBT_APMPOWERSTATUSCHANGE DEBUG: \n---\n(prev_status)\n";
+        ShowPowerStatus(&prev_status);
+        cout << "---\n(status)\n";
+        ShowPowerStatus(&status);
+        cout << "---" << endl;
+#endif
+        /* If the charge state is being suppressed but only it or members
+           affected by it have changed then don't show anything. */
+        if(suppress_charge_state &&
+           status.BatteryLifePercent == prev_status.BatteryLifePercent &&
+           ((status.BatteryFlag & ~SPSF_BATTERYCHARGING) ==
+            (prev_status.BatteryFlag & ~SPSF_BATTERYCHARGING)))
+          return TRUE;
+      }
+      else
+        status = prev_status;
+    }
+
 #define CASE_PBT(item) \
   case item: cout << #item; break;
-  case WM_POWERBROADCAST:
+
     cout << TIMESTAMPED_PREFIX << "WM_POWERBROADCAST: ";
     switch(wParam) {
     CASE_PBT(PBT_APMQUERYSUSPEND);        /* 0x0000 */  /* Win2k & XP only */
@@ -774,6 +812,67 @@ int main(int argc, char *argv[])
       full_status_shown = true;
     }
 
+    /* Detect a battery revival.
+       If a battery is in a really bad state then it's possible that the
+       battery, the device or the charger will cycle the charger on and off in
+       an attempt to slowly revive the battery. A full revival may take a day.
+       That can create a lot of noise in the log, so suppress revival
+       charges when not verbose.
+
+       In order to detect a revival charge, record the current tick count
+       each time the charge state changes and then assume revival if
+       'max_changes' number of changes occurred within 'span_minutes'. */
+    {
+      const unsigned max_changes = 20;
+      const unsigned span_minutes = 30;
+      DWORD now = GetTickCount();
+
+      // Used like a FIFO for each change's tick count, up to max_changes
+      static deque<DWORD> ticks;
+
+      /* Clear all the stored ticks if more than span_minutes has passed since
+         the last charge state change. */
+      if(ticks.size() && (now - ticks.back()) >= (span_minutes * 60 * 1000))
+        ticks.clear();
+
+      if(CHARGING(status) != CHARGING(prev_status)) {
+        if(ticks.size() == max_changes)
+          ticks.pop_front();
+
+        ticks.push_back(now);
+      }
+
+      /* If there's a battery revival taking place then warn. If not verbose
+         then also temporarily suppress future charge state changes while the
+         revival is taking place so that it won't fill the log with noise. */
+      if(ticks.size() == max_changes) {
+        DWORD elapsed_minutes = (ticks.back() - ticks.front()) / 1000 / 60;
+
+        if(elapsed_minutes < span_minutes) {
+          if(!suppress_charge_state) {
+            suppress_charge_state = !verbose;
+
+            if(!verbose || full_status_shown) {
+              stringstream ss;
+              ss << TIMESTAMPED_PREFIX << "WARNING: ";
+              const string &warn = ss.str();
+
+              cout << warn << "Frequent on/off charges are occurring." << endl
+                   << warn << "Possible battery revival or bad battery."
+                   << endl;
+
+              if(suppress_charge_state)
+                cout << warn << "Temporarily ignoring charge state." << endl;
+            }
+          }
+        }
+        else
+          suppress_charge_state = false;
+      }
+      else
+        suppress_charge_state = false;
+    }
+
     /* Suppress the battery lifetime if less than 'span_minutes' has passed
        since the computer woke up. The battery systray behaves similar but its
        logic for this appears to be more complex. For example, sometimes it can
@@ -847,15 +946,11 @@ int main(int argc, char *argv[])
        Note battery percent remaining is compared instead of lifetime
        since the latter is volatile and could cause a lot of updates. */
 
-#define BATTSAVER(status)   ((status).Reserved1 == 1)
-#define CHARGING(status)    (!!((status).BatteryFlag & SPSF_BATTERYCHARGING))
-#define NO_BATTERY(status)  (!!((status).BatteryFlag & SPSF_BATTERYNOBATTERY))
-#define PLUGGED_IN(status)  ((status).ACLineStatus == 1)
-
     /* Check if the battery saver status has changed.
        The battery saver status is available since Windows 10. It's stored in
        member SystemStatus but older headers use the name Reserved1. */
-    if(os.dwMajorVersion >= 10 &&
+    if(!suppress_charge_state &&
+       os.dwMajorVersion >= 10 &&
        BATTSAVER(status) != BATTSAVER(prev_status)) {
       cout << TIMESTAMPED_PREFIX
            << SystemStatusFlagStr(status.Reserved1) << endl;
@@ -863,7 +958,8 @@ int main(int argc, char *argv[])
 
     if(!full_status_shown &&
        status.BatteryLifePercent == prev_status.BatteryLifePercent &&
-       CHARGING(status) == CHARGING(prev_status) &&
+       (suppress_charge_state ||
+        (CHARGING(status) == CHARGING(prev_status))) &&
        NO_BATTERY(status) == NO_BATTERY(prev_status) &&
        PLUGGED_IN(status) == PLUGGED_IN(prev_status))
       continue;
@@ -875,6 +971,10 @@ int main(int argc, char *argv[])
     if(NO_BATTERY(status)) {
       // eg: No battery is detected
       cout << "No battery is detected";
+    }
+    else if(suppress_charge_state) {
+      // eg: 100% remaining
+      cout << BatteryLifePercentStr(status.BatteryLifePercent) << " remaining";
     }
     else if(status.BatteryLifePercent == 100 &&
             (suppress_lifetime ||
