@@ -588,7 +588,7 @@ HWND InitMonitorWindow()
   ATOM atomWindowClass = RegisterClass(&wc);
   if(!atomWindowClass) {
     DWORD gle = GetLastError();
-    cerr << "RegisterClass() failed to make window class "
+    cerr << "Error: RegisterClass() failed to make window class "
          << "\"" << window_class_name << "\""
          << " with error code " << gle << "." << endl;
     return NULL;
@@ -598,7 +598,7 @@ HWND InitMonitorWindow()
                              0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
   if(!hwnd) {
     DWORD gle = GetLastError();
-    cerr << "CreateWindowEx() failed to make window "
+    cerr << "Error: CreateWindowEx() failed to make window "
          << "\"" << window_class_name << "\""
          << " with error code " << gle << "." << endl;
     return NULL;
@@ -716,7 +716,8 @@ int main(int argc, char *argv[])
        */
     if(!SetThreadExecutionState(ES_AWAYMODE_REQUIRED | ES_CONTINUOUS |
                                 ES_SYSTEM_REQUIRED)) {
-      cerr << "SetThreadExecutionState failed to prevent sleep." << endl;
+      cerr << "Error: SetThreadExecutionState failed to prevent sleep."
+           << endl;
       exit(1);
     }
     if(verbose) {
@@ -761,7 +762,7 @@ int main(int argc, char *argv[])
 
   HWND hwnd = InitMonitorWindow();
   if(!hwnd) {
-    cerr << "InitMonitorWindow() failed." << endl;
+    cerr << "Error: InitMonitorWindow() failed." << endl;
     exit(1);
   }
 
@@ -787,7 +788,8 @@ int main(int argc, char *argv[])
 
     if(!GetSystemPowerStatus(&status)) {
       DWORD gle = GetLastError();
-      cerr << "GetSystemPowerStatus() failed, GetLastError(): " << gle << endl;
+      cerr << "Error: GetSystemPowerStatus() failed, GetLastError(): " << gle
+           << endl;
       status = prev_status;
       for(int i = 0; i < 10; ++i) {
         Sleep(100);
