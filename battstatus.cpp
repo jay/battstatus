@@ -14,8 +14,8 @@ Sample output:
 It can optionally show verbose information and prevent sleep. Use option --help
 to see the usage information.
 
-cl /W4 /wd4127 battstatus.cpp user32.lib powrprof.lib
-g++ -Wall -std=c++11 -o battstatus battstatus.cpp -lpowrprof
+cl /W4 /wd4127 battstatus.cpp user32.lib powrprof.lib setupapi.lib
+g++ -Wall -std=gnu++11 -o battstatus battstatus.cpp -lpowrprof -lsetupapi -luuid
 
 https://github.com/jay/battstatus
 *//*
@@ -48,15 +48,20 @@ GNU General Public License for more details.
 #ifdef __MINGW32__
 #include <_mingw.h>
 #ifdef __MINGW64_VERSION_MAJOR
+#include <batclass.h>
 #include <ntstatus.h>
 #else
+#include <ddk/batclass.h>
 #include <ddk/ntddk.h>
 #endif
 #else
+#include <batclass.h>
 #include <ntstatus.h>
 #endif
 
+#include <devguid.h>
 #include <powrprof.h>
+#include <setupapi.h>
 
 #include <assert.h>
 #include <limits.h>
@@ -139,11 +144,273 @@ string TimeToLocalTimeStr(time_t t)
 text
 */
 #define TIMESTAMPED_HEADER \
-  "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n"
+  "\n--- " << TimeToLocalTimeStr(time(NULL)).c_str() << " ---\n"
 
 /* The timestamp style in default mode: [Sun May 28 07:00:27 PM]: text */
 #define TIMESTAMPED_PREFIX \
-  "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
+  "[" << TimeToLocalTimeStr(time(NULL)).c_str() << "]: "
+
+// this is the input for EnumBattInterfacesProc
+struct device {
+  /* slot always has a valid number. Any other member may be valid. */
+  unsigned slot;  // battery interface number  (starts at 0, sequential)
+  HANDLE handle;  // battery interface handle  (invalid: INVALID_HANDLE_VALUE)
+  wchar_t *path;  // battery interface path  (opens handle)
+};
+
+/* this is the output for EnumBattInterfacesProc
+
+MSDN says battery tags are not unique between battery device interfaces
+(slots), therefore more than one slot may have a battery with the same tag.
+Furthermore the tag may change even if the battery hasn't, and when that
+happens "all cached data should be re-read".
+
+To see if the same physical battery is present compare unique_id, not tag.
+
+https://msdn.microsoft.com/en-us/library/windows/desktop/aa372659.aspx
+*/
+struct battery {
+  /* 'success' signifies that all requested information was obtained from the
+     battery. Unless otherwise noted any member may be valid even if success is
+     false. To determine if a battery is present in the slot check if
+     tag != BATTERY_TAG_INVALID. */
+  bool success;
+  ULONG tag;                 // battery tag  (invalid: BATTERY_TAG_INVALID)
+  wchar_t *unique_id;        // string that uniquely identifies the battery
+  wchar_t *path;             // battery interface path
+  BATTERY_INFORMATION info;  // battery info  (invalid: success is false)
+  double health;             // percentage of full capacity vs design capacity
+};
+
+typedef BOOL (CALLBACK* BATTINTENUMPROC)(const struct device *device,
+                                         void *cbdata);
+
+/* Get battery info for each battery.
+
+Pass a pointer to an _empty_ vector<battery> as cbdata.
+
+This is called by EnumBattInterfaces once for each battery interface without
+skipping any inaccessible devices, starting at 0 until the last interface.
+
+After this function returns the device resources are freed. If you'll need to
+reopen the battery interface later, make a copy of the path.
+
+TRUE:  Continue on to the next interface.
+FALSE: Stop enumerating interfaces; do not call this function again.
+*/
+BOOL CALLBACK EnumBattInterfacesProc(const struct device *device,
+                                     void *cbdata)
+{
+  DWORD bytes_written;
+
+  vector<battery> *batteries = (vector<battery> *)cbdata;
+
+  batteries->push_back(battery());
+  struct battery *battery = &batteries->back();
+  battery->tag = BATTERY_TAG_INVALID;
+
+  if(!device->path || device->handle == INVALID_HANDLE_VALUE)
+    return TRUE; // interface inaccessible, continue on
+
+  battery->path = _wcsdup(device->path);
+  if(!battery->path) {
+    SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    return FALSE;
+  }
+
+  // How long to wait for the interface to return a battery tag
+  ULONG wait = 0;
+
+  if(!DeviceIoControl(device->handle, IOCTL_BATTERY_QUERY_TAG,
+                      &wait, sizeof(wait),
+                      &battery->tag, sizeof(battery->tag),
+                      &bytes_written, NULL)) {
+    return TRUE; // battery not found, continue on
+  }
+
+  BATTERY_QUERY_INFORMATION bqi = { battery->tag };
+
+  bqi.InformationLevel = BatteryUniqueID;
+
+  wchar_t buffer[1024];
+  if(!DeviceIoControl(device->handle, IOCTL_BATTERY_QUERY_INFORMATION,
+                      &bqi, sizeof(bqi),
+                      buffer, sizeof(buffer),
+                      &bytes_written, NULL)) {
+    return TRUE; // unique id string not found or too long, continue on
+  }
+
+  battery->unique_id = _wcsdup(buffer);
+  if(!battery->unique_id) {
+    SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    return FALSE;
+  }
+
+  bqi.InformationLevel = BatteryInformation;
+
+  if(!DeviceIoControl(device->handle, IOCTL_BATTERY_QUERY_INFORMATION,
+                      &bqi, sizeof(bqi),
+                      &battery->info, sizeof(battery->info),
+                      &bytes_written, NULL)) {
+    memset(&battery->info, 0, sizeof battery->info);
+    return TRUE; // battery info isn't accessible, continue on
+  }
+
+  if(!battery->info.FullChargedCapacity ||
+     battery->info.FullChargedCapacity == (ULONG)-1)
+    battery->health = 0;
+  else if(!battery->info.DesignedCapacity ||
+          battery->info.DesignedCapacity == (ULONG)-1 ||
+          battery->info.FullChargedCapacity >= battery->info.DesignedCapacity)
+    battery->health = 100;
+  else {
+    battery->health = 100 * ((double)battery->info.FullChargedCapacity /
+                             battery->info.DesignedCapacity);
+  }
+
+  battery->success = true;
+  return TRUE;
+}
+
+/* Enumerate the battery device interfaces.
+
+EnumProc should be called by this function once for each battery interface
+without skipping any inaccessible devices, starting at 0 until the last
+interface.
+
+TRUE:  EnumProc was called and returned TRUE for all interfaces.
+FALSE: No interfaces found, out of memory or EnumProc returned FALSE.
+*/
+BOOL WINAPI EnumBattInterfaces(BATTINTENUMPROC EnumProc, void *cbdata)
+{
+  HDEVINFO hdev = SetupDiGetClassDevs(&GUID_DEVCLASS_BATTERY, 0, 0,
+                                      DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+  if(hdev == INVALID_HANDLE_VALUE)
+    return FALSE;
+
+  DWORD idev = 0;
+  for(; idev < 100; ++idev) {
+    struct device device;
+
+    device.slot = idev;
+    device.handle = INVALID_HANDLE_VALUE;
+    device.path = NULL;
+
+    SP_DEVICE_INTERFACE_DATA did = { sizeof did, };
+
+    if(SetupDiEnumDeviceInterfaces(hdev, NULL, &GUID_DEVCLASS_BATTERY, idev,
+                                   &did)) {
+      DWORD cbRequired = 0;
+
+      if(!SetupDiGetDeviceInterfaceDetailW(hdev, &did, NULL, 0,
+                                           &cbRequired, 0) &&
+         GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+        PSP_DEVICE_INTERFACE_DETAIL_DATA_W pdidd =
+          (PSP_DEVICE_INTERFACE_DETAIL_DATA_W)calloc(1, cbRequired);
+
+        if(!pdidd) {
+          SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+          return FALSE;
+        }
+
+        pdidd->cbSize = sizeof(*pdidd);
+
+        if(SetupDiGetDeviceInterfaceDetailW(hdev, &did, pdidd, cbRequired,
+                                            &cbRequired, 0)) {
+          device.path = _wcsdup(pdidd->DevicePath);
+
+          if(!device.path) {
+            free(pdidd);
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+          }
+
+          device.handle = CreateFileW(device.path,
+                                      GENERIC_READ | GENERIC_WRITE,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                      NULL,
+                                      OPEN_EXISTING,
+                                      FILE_ATTRIBUTE_NORMAL,
+                                      NULL);
+        }
+
+        free(pdidd);
+      }
+    }
+    else if(GetLastError() == ERROR_NO_MORE_ITEMS)
+      break;
+
+    BOOL rc = EnumProc(&device, cbdata);
+    DWORD gle = GetLastError();
+
+    free(device.path);
+
+    if(device.handle != INVALID_HANDLE_VALUE)
+      CloseHandle(device.handle);
+
+    if(!rc) {
+      SetLastError(gle);
+      return FALSE;
+    }
+  }
+
+  return TRUE;
+}
+
+void ShowIndividualBatteryHealth()
+{
+  wstringstream wss;
+  const char *borderline = "========================================="
+                           "======================================\n";
+
+wss << borderline <<
+"Individual Battery Health:\n"
+"\n"
+"This program is designed to monitor the overall combined battery capacity,\n"
+"however what follows is the percentage of how much capacity each individual\n"
+"battery is currently able to store (full capacity) versus how much capacity\n"
+"it was initially able to store (design capacity), also known as health. A\n"
+"battery will lose health the more charge cycles it is put through. Other\n"
+"factors affect health such as the method of charging. For example, in my\n"
+"experience working on a number of Dell Latitudes, the Xpress charge feature\n"
+"can reduce health faster than normal.\n";
+
+  vector<battery> batteries;
+  EnumBattInterfaces(EnumBattInterfacesProc, &batteries);
+
+  unsigned batteries_present = 0;
+
+  for(DWORD i = 0; i < batteries.size(); ++i) {
+    wss << "\nSlot #" << i << ": "
+        << (batteries[i].path ? batteries[i].path : L"(inaccessible)") << "\n";
+
+    if(batteries[i].tag == BATTERY_TAG_INVALID) {
+      wss << "(empty)\n";
+      continue;
+    }
+
+    ++batteries_present;
+
+    if(!batteries[i].success) {
+      wss << "(inaccessible)\n";
+      continue;
+    }
+
+    wss << "\"" << batteries[i].unique_id << "\" at "
+        << std::fixed << setprecision(2)
+        << batteries[i].health << "% health " << "(full: "
+        << batteries[i].info.FullChargedCapacity << ", design: "
+        << batteries[i].info.DesignedCapacity << ")\n";
+  }
+
+  wss << "\nCounted " << batteries_present << " "
+      << (batteries_present == 1 ? "battery" : "batteries") << " "
+      << "and " << batteries.size() << " battery interfaces. "
+      << "(" << TimeToLocalTimeStr(time(NULL)).c_str() << ")\n";
+
+  wss << "\n" << borderline;
+  wcout << endl << wss.str() << endl;
+}
 
 template <typename T>
 string UndocumentedValueStr(T undocumented_value)
@@ -725,6 +992,9 @@ int main(int argc, char *argv[])
            << endl;
     }
   }
+
+  if(verbose)
+    ShowIndividualBatteryHealth();
 
   /* in verbose mode show all SYSTEM_BATTERY_STATE members */
   if(verbose) {
