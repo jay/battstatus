@@ -121,6 +121,30 @@ bool suppress_charge_state;
    as when the computer just woke up. */
 bool suppress_lifetime;
 
+/* time as local time string in format: Tue May 16 03:24:31 PM */
+string TimeToLocalTimeStr(time_t t)
+{
+  char buf[100];
+  /* localtime is thread-safe in Windows but the per-thread structure that's
+     returned is shared by gmtime, mktime, mkgmtime. */
+  struct tm *lt = localtime(&t);
+  // old format: "%Y-%m-%d %H:%M:%S" 2017-05-16 15:10:08
+  if(!lt || !strftime(buf, sizeof buf, "%a %b %d %I:%M:%S %p", lt))
+    return "Unknown time";
+  return buf;
+}
+
+/* The timestamp style in verbose mode:
+--- Sun May 28 07:00:55 PM ---
+text
+*/
+#define TIMESTAMPED_HEADER \
+  "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n"
+
+/* The timestamp style in default mode: [Sun May 28 07:00:27 PM]: text */
+#define TIMESTAMPED_PREFIX \
+  "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
+
 template <typename T>
 string UndocumentedValueStr(T undocumented_value)
 {
@@ -254,30 +278,6 @@ string BatteryFullLifeTimeStr(DWORD BatteryFullLifeTime)
 {
   return BatteryLifeTimeStr(BatteryFullLifeTime);
 }
-
-/* time as local time string in format: Tue May 16 03:24:31 PM */
-string TimeToLocalTimeStr(time_t t)
-{
-  char buf[100];
-  /* localtime is thread-safe in Windows but the per-thread structure that's
-     returned is shared by gmtime, mktime, mkgmtime. */
-  struct tm *lt = localtime(&t);
-  // old format: "%Y-%m-%d %H:%M:%S" 2017-05-16 15:10:08
-  if(!lt || !strftime(buf, sizeof buf, "%a %b %d %I:%M:%S %p", lt))
-    return "Unknown time";
-  return buf;
-}
-
-/* The timestamp style in verbose mode:
---- Sun May 28 07:00:55 PM ---
-text
-*/
-#define TIMESTAMPED_HEADER \
-  "\n--- " << TimeToLocalTimeStr(time(NULL)) << " ---\n"
-
-/* The timestamp style in default mode: [Sun May 28 07:00:27 PM]: text */
-#define TIMESTAMPED_PREFIX \
-  "[" << TimeToLocalTimeStr(time(NULL)) << "]: "
 
 void ShowPowerStatus(const SYSTEM_POWER_STATUS *status)
 {
