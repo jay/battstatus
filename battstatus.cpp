@@ -14,7 +14,10 @@ Sample output:
 It can optionally show verbose information and prevent sleep. Use option --help
 to see the usage information.
 
+To build using Visual Studio 2008 (with TR1 support) or later:
 cl /W4 /wd4127 battstatus.cpp user32.lib powrprof.lib setupapi.lib
+
+To build using MinGW or MinGW-w64:
 g++ -Wall -std=gnu++11 -o battstatus battstatus.cpp -lpowrprof -lsetupapi -luuid
 
 https://github.com/jay/battstatus
@@ -66,6 +69,7 @@ GNU General Public License for more details.
 #include <assert.h>
 #include <limits.h>
 #include <stdio.h>
+#include <time.h>
 
 #include <deque>
 #include <iomanip>
@@ -112,6 +116,12 @@ Battery discharge:    -11433mW
 #define BATT_FIELD_WIDTH 22
 
 using namespace std;
+
+/* In Visual Studio 2008 we need the TR1 functions in std::tr1, which is only
+   available if its optional feature pack or SP1 is installed. */
+#if _MSC_VER == 1500
+using namespace std::tr1;
+#endif
 
 unsigned verbose;
 bool prevent_sleep;
@@ -424,10 +434,11 @@ string UndocumentedValueStr(T undocumented_value)
 
 string UndocumentedValueStr(char undocumented_value)
 {
-  return UndocumentedValueStr<
-    typename conditional<
-      is_signed<char>::value, signed, unsigned
-    >::type>(undocumented_value);
+  // can't use conditional class here since VS2008 doesn't have it
+  if(is_signed<char>::value)
+    return UndocumentedValueStr<signed>(undocumented_value);
+  else
+    return UndocumentedValueStr<unsigned>(undocumented_value);
 }
 
 string UndocumentedValueStr(unsigned char undocumented_value)
