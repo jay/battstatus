@@ -160,6 +160,232 @@ text
 #define TIMESTAMPED_PREFIX \
   "[" << TimeToLocalTimeStr(time(NULL)).c_str() << "]: "
 
+template <typename T>
+string UndocumentedValueStr(T undocumented_value)
+{
+  stringstream ss;
+  ss << "Undocumented value: " << undocumented_value;
+  if(is_arithmetic<T>::value)
+    ss << " (hex: " << hex << undocumented_value << ")";
+  return ss.str();
+}
+
+string UndocumentedValueStr(char undocumented_value)
+{
+  // can't use conditional class here since VS2008 doesn't have it
+  if(is_signed<char>::value)
+    return UndocumentedValueStr<signed>(undocumented_value);
+  else
+    return UndocumentedValueStr<unsigned>(undocumented_value);
+}
+
+string UndocumentedValueStr(unsigned char undocumented_value)
+{
+  return UndocumentedValueStr<unsigned>(undocumented_value);
+}
+
+string UndocumentedValueStr(signed char undocumented_value)
+{
+  return UndocumentedValueStr<signed>(undocumented_value);
+}
+
+/* Relative capacity and rate:
+   According to BATTERY_INFORMATION documentation the capacity and rate
+   information reported by a battery may be relative, with all rate information
+   reported in units per hour.
+   "If [flag BATTERY_CAPACITY_RELATIVE] is set, all references to units in
+   the other battery documentation can be ignored."
+   That flag is set per battery, however most of this program looks at overall
+   battery use in structures where that information is not available, so in
+   those cases we treat it as unknown.
+   https://msdn.microsoft.com/en-us/library/windows/desktop/aa372661.aspx */
+
+enum CapacityType
+{
+  CAPACITY_TYPE_UNKNOWN,
+  CAPACITY_TYPE_RELATIVE,
+  CAPACITY_TYPE_MILLIWATT_HOUR
+};
+
+enum RateType
+{
+  RATE_TYPE_UNKNOWN,
+  RATE_TYPE_RELATIVE,
+  RATE_TYPE_MILLIWATT
+};
+
+string CapacityStr(DWORD unit, enum CapacityType ct = CAPACITY_TYPE_UNKNOWN)
+{
+  stringstream ss;
+
+  ss << unit;
+  if(ct == CAPACITY_TYPE_RELATIVE)
+    ss << " (relative)";
+  else if(ct == CAPACITY_TYPE_MILLIWATT_HOUR)
+    ss << "mWh";
+  else
+    ss << "mWh (or relative)";
+
+  return ss.str();
+}
+
+string RateStr(DWORD unit, enum RateType rt = RATE_TYPE_UNKNOWN)
+{
+  stringstream ss;
+
+  if(rt == RATE_TYPE_RELATIVE)
+    ss << unit << " (relative)";
+  else {
+    /* Rate as described by SYSTEM_BATTERY_STATE (other rates may differ):
+       "The current rate of discharge of the battery, in mW. A nonzero,
+       positive rate indicates charging; a negative rate indicates discharging.
+       Some batteries report only discharging rates. This value should be
+       treated as a LONG as it can contain negative values (with the high bit
+       set)."
+       However when some of my batteries charge the Rate is:
+       0x80000000 == -2147483648 (LONG) == 2147483648 (DWORD)
+       When my batteries are removed the Rate is 0. */
+    if(unit == 0 || unit == 0x80000000)
+      return "Unknown";
+
+    ss << showpos << (LONG)unit;
+    if(rt == RATE_TYPE_MILLIWATT)
+      ss << "mW";
+    else
+      ss << "mW (or relative)";
+  }
+
+  return ss.str();
+}
+
+string RateStr(LONG Rate, enum RateType rt = RATE_TYPE_UNKNOWN)
+{
+  return RateStr((DWORD)Rate, rt);
+}
+
+string CapabilitiesStr(ULONG Capabilities)
+{
+  if(Capabilities == 0)
+    return "<none>";
+
+  stringstream ss;
+#define EXTRACT_CAPABILITIES(flag) \
+  if((Capabilities & flag)) { \
+    if(ss.tellp()) \
+      ss << " | "; \
+    ss << #flag; \
+    Capabilities &= ~flag; \
+  }
+  EXTRACT_CAPABILITIES(BATTERY_CAPACITY_RELATIVE);
+  EXTRACT_CAPABILITIES(BATTERY_IS_SHORT_TERM);
+  EXTRACT_CAPABILITIES(BATTERY_SET_CHARGE_SUPPORTED);
+  EXTRACT_CAPABILITIES(BATTERY_SET_DISCHARGE_SUPPORTED);
+  EXTRACT_CAPABILITIES(BATTERY_SYSTEM_BATTERY);
+  if(Capabilities) {
+    if(ss.tellp())
+      ss << " | ";
+    ss << UndocumentedValueStr(Capabilities);
+  }
+  return ss.str();
+}
+
+string TechnologyStr(UCHAR Technology)
+{
+  switch(Technology)
+  {
+  case 0: return "Nonrechargeable";
+  case 1: return "Rechargeable";
+  }
+  return UndocumentedValueStr(Technology);
+}
+
+string ChemistryStr(const UCHAR Chemistry[4])
+{
+  return string((char *)Chemistry, sizeof Chemistry);
+}
+
+string DesignedCapacityStr(ULONG DesignedCapacity,
+                           enum CapacityType ct = CAPACITY_TYPE_UNKNOWN)
+{
+  return CapacityStr(DesignedCapacity, ct);
+}
+
+string FullChargedCapacityStr(ULONG FullChargedCapacity,
+                              enum CapacityType ct = CAPACITY_TYPE_UNKNOWN)
+{
+  return CapacityStr(FullChargedCapacity, ct);
+}
+
+/* DefaultAlert1:
+"The manufacturer's suggestion of a capacity, in mWh, at which a low battery
+alert should occur."
+*/
+string DefaultAlert1Str(DWORD DefaultAlert1,
+                        enum CapacityType ct = CAPACITY_TYPE_UNKNOWN)
+{
+  return CapacityStr(DefaultAlert1, ct);
+}
+
+/* DefaultAlert2:
+"The manufacturer's suggestion of a capacity, in mWh, at which a warning
+battery alert should occur."
+*/
+string DefaultAlert2Str(DWORD DefaultAlert2,
+                        enum CapacityType ct = CAPACITY_TYPE_UNKNOWN)
+{
+  return CapacityStr(DefaultAlert2, ct);
+}
+
+string CriticalBiasStr(ULONG CriticalBias,
+                        enum CapacityType ct = CAPACITY_TYPE_UNKNOWN)
+{
+  return CapacityStr(CriticalBias, ct);
+}
+
+string CycleCountStr(ULONG CycleCount)
+{
+  stringstream ss;
+  ss << CycleCount;
+  return ss.str();
+}
+
+string BatteryInformationStr(const BATTERY_INFORMATION *bi)
+{
+  stringstream ss;
+
+  enum CapacityType ct = ((bi->Capabilities & BATTERY_CAPACITY_RELATIVE) ?
+                          CAPACITY_TYPE_RELATIVE :
+                          CAPACITY_TYPE_MILLIWATT_HOUR);
+
+#define BATTINFO_PRELUDE(item) \
+  ss << left << setw(BATT_FIELD_WIDTH) << #item ": " << right;
+
+#define SHOW_BATTINFO(item) \
+  BATTINFO_PRELUDE(item); \
+  ss << item##Str(bi->item) << "\n";
+
+#define SHOW_BATTINFO_CAPACITY_MEMBER(item) \
+  BATTINFO_PRELUDE(item); \
+  ss << item##Str(bi->item, ct) << "\n";
+
+  SHOW_BATTINFO(Capabilities);
+  SHOW_BATTINFO(Technology);
+  SHOW_BATTINFO(Chemistry);
+  SHOW_BATTINFO_CAPACITY_MEMBER(DesignedCapacity);
+  SHOW_BATTINFO_CAPACITY_MEMBER(FullChargedCapacity);
+  SHOW_BATTINFO_CAPACITY_MEMBER(DefaultAlert1);
+  SHOW_BATTINFO_CAPACITY_MEMBER(DefaultAlert2);
+  SHOW_BATTINFO_CAPACITY_MEMBER(CriticalBias);
+  SHOW_BATTINFO(CycleCount);
+
+  return ss.str();
+}
+
+void ShowBatteryInformation(const BATTERY_INFORMATION *bi)
+{
+  cout << BatteryInformationStr(bi) << flush;
+}
+
 // this is the input for EnumBattInterfacesProc
 struct device {
   /* slot always has a valid number. Any other member may be valid. */
@@ -369,9 +595,12 @@ BOOL WINAPI EnumBattInterfaces(BATTINTENUMPROC EnumProc, void *cbdata)
 
 void ShowIndividualBatteryHealth()
 {
-  wstringstream wss;
   const char *borderline = "========================================="
                            "======================================\n";
+  const char *sepline =    "-----------------------------------------"
+                           "--------------------------------------\n";
+
+  wstringstream wss;
 
 wss << borderline <<
 "Individual Battery Health:\n"
@@ -382,7 +611,7 @@ wss << borderline <<
 "it was initially able to store (design capacity), also known as health. A\n"
 "battery will lose health the more charge cycles it is put through. Other\n"
 "factors affect health such as the method of charging. For example, in my\n"
-"experience working on a number of Dell Latitudes, the Xpress charge feature\n"
+"experience working on a number of Dell Latitudes, the ExpressCharge feature\n"
 "can reduce health faster than normal.\n";
 
   vector<battery> batteries;
@@ -390,8 +619,9 @@ wss << borderline <<
 
   unsigned batteries_present = 0;
 
-  for(DWORD i = 0; i < batteries.size(); ++i) {
-    wss << "\nSlot #" << i << ": "
+  for(DWORD i = 0; i < batteries.size(); ++i, wss << sepline) {
+    wss << "\n" << sepline;
+    wss << "Slot #" << i << ": "
         << (batteries[i].path ? batteries[i].path : L"(inaccessible)") << "\n";
 
     if(batteries[i].tag == BATTERY_TAG_INVALID) {
@@ -406,11 +636,13 @@ wss << borderline <<
       continue;
     }
 
-    wss << "\"" << batteries[i].unique_id << "\" at "
+    wss << "\n\"" << batteries[i].unique_id << "\" at "
         << std::fixed << setprecision(2)
         << batteries[i].health << "% health " << "(full: "
         << batteries[i].info.FullChargedCapacity << ", design: "
         << batteries[i].info.DesignedCapacity << ")\n";
+
+    wss << "\n" << BatteryInformationStr(&batteries[i].info).c_str();
   }
 
   wss << "\nCounted " << batteries_present << " "
@@ -420,35 +652,6 @@ wss << borderline <<
 
   wss << "\n" << borderline;
   wcout << endl << wss.str() << endl;
-}
-
-template <typename T>
-string UndocumentedValueStr(T undocumented_value)
-{
-  stringstream ss;
-  ss << "Undocumented value: " << undocumented_value;
-  if(is_arithmetic<T>::value)
-    ss << " (hex: " << hex << undocumented_value << ")";
-  return ss.str();
-}
-
-string UndocumentedValueStr(char undocumented_value)
-{
-  // can't use conditional class here since VS2008 doesn't have it
-  if(is_signed<char>::value)
-    return UndocumentedValueStr<signed>(undocumented_value);
-  else
-    return UndocumentedValueStr<unsigned>(undocumented_value);
-}
-
-string UndocumentedValueStr(unsigned char undocumented_value)
-{
-  return UndocumentedValueStr<unsigned>(undocumented_value);
-}
-
-string UndocumentedValueStr(signed char undocumented_value)
-{
-  return UndocumentedValueStr<signed>(undocumented_value);
 }
 
 string ACLineStatusStr(unsigned ACLineStatus)
@@ -607,82 +810,19 @@ FUNC_SHOW_BOOL(BatteryPresent);
 FUNC_SHOW_BOOL(Charging);
 FUNC_SHOW_BOOL(Discharging);
 
-string mWhStr(DWORD mWh)
-{
-  stringstream ss;
-  ss << mWh << "mWh";
-  return ss.str();
-}
-
 string MaxCapacityStr(DWORD MaxCapacity)
 {
-  // capacity may be relative, refer to RateStr comment
-  return mWhStr(MaxCapacity) + " (or relative)";
+  return CapacityStr(MaxCapacity);
 }
 
 string RemainingCapacityStr(DWORD RemainingCapacity)
 {
-  // capacity may be relative, refer to RateStr comment
-  return mWhStr(RemainingCapacity) + " (or relative)";
-}
-
-string RateStr(DWORD Rate)
-{
-  /* Rate: "The current rate of discharge of the battery, in mW. A nonzero,
-     positive rate indicates charging; a negative rate indicates discharging.
-     Some batteries report only discharging rates. This value should be treated
-     as a LONG as it can contain negative values (with the high bit set)."
-     However when some of my batteries charge the Rate is:
-     0x80000000 == -2147483648 (LONG) == 2147483648 (DWORD)
-     When my batteries are removed the Rate is 0. */
-  if(!Rate || Rate == 0x80000000)
-    return "Unknown";
-
-  /* Relative capacity and rate:
-     The Rate provided to this function is from SYSTEM_BATTERY_STATE and is as
-     documented in the comment block above. However according to
-     BATTERY_INFORMATION documentation the capacity and rate information
-     reported by a battery may be relative, with all rate information reported
-     in units per hour.
-     "If [flag BATTERY_CAPACITY_RELATIVE] is set, all references to units in
-     the other battery documentation can be ignored."
-     That's currently beyond the scope of this program which only works with
-     the battery status as a whole and does not track individual batteries.
-     Instead we do what Microsoft's pwrtest does and append " (or relative)".
-     https://msdn.microsoft.com/en-us/library/windows/desktop/aa372661.aspx */
-  stringstream ss;
-  ss << showpos << (LONG)Rate << "mW (or relative)";
-  return ss.str();
-}
-
-string RateStr(LONG Rate)
-{
-  return RateStr((DWORD)Rate);
+  return CapacityStr(RemainingCapacity);
 }
 
 string EstimatedTimeStr(DWORD EstimatedTime)
 {
   return BatteryLifeTimeStr(EstimatedTime);
-}
-
-/* DefaultAlert1:
-"The manufacturer's suggestion of a capacity, in mWh, at which a low battery
-alert should occur."
-*/
-string DefaultAlert1Str(DWORD DefaultAlert1)
-{
-  // capacity may be relative, refer to RateStr comment
-  return mWhStr(DefaultAlert1) + " (or relative)";
-}
-
-/* DefaultAlert2:
-"The manufacturer's suggestion of a capacity, in mWh, at which a warning
-battery alert should occur."
-*/
-string DefaultAlert2Str(DWORD DefaultAlert2)
-{
-  // capacity may be relative, refer to RateStr comment
-  return mWhStr(DefaultAlert2) + " (or relative)";
 }
 
 void ShowBatteryState(const SYSTEM_BATTERY_STATE *state)
