@@ -386,6 +386,21 @@ void ShowBatteryInformation(const BATTERY_INFORMATION *bi)
   cout << BatteryInformationStr(bi) << flush;
 }
 
+string ManufactureDateStr(BATTERY_MANUFACTURE_DATE *mnfctr_date)
+{
+  stringstream ss;
+
+  if(!mnfctr_date->Year)
+    return "Unknown";
+
+  ss.fill('0');
+  ss << setw(4) << (unsigned)mnfctr_date->Year << "-"
+     << setw(2) << (unsigned)mnfctr_date->Month << "-"
+     << setw(2) << (unsigned)mnfctr_date->Day;
+
+  return ss.str();
+}
+
 // this is the input for EnumBattInterfacesProc
 struct device {
   /* slot always has a valid number. Any other member may be valid. */
@@ -414,6 +429,8 @@ struct battery {
   ULONG tag;                 // battery tag  (invalid: BATTERY_TAG_INVALID)
   wchar_t *unique_id;        // string that uniquely identifies the battery
   wchar_t *path;             // battery interface path
+  // battery manufacture date (unknown: 0000-00-00)
+  BATTERY_MANUFACTURE_DATE mnfctr_date;
   BATTERY_INFORMATION info;  // battery info  (invalid: success is false)
   double health;             // percentage of full capacity vs design capacity
 };
@@ -480,6 +497,16 @@ BOOL CALLBACK EnumBattInterfacesProc(const struct device *device,
   if(!battery->unique_id) {
     SetLastError(ERROR_NOT_ENOUGH_MEMORY);
     return FALSE;
+  }
+
+  bqi.InformationLevel = BatteryManufactureDate;
+
+  if(!DeviceIoControl(device->handle, IOCTL_BATTERY_QUERY_INFORMATION,
+                      &bqi, sizeof(bqi),
+                      &battery->mnfctr_date, sizeof(battery->mnfctr_date),
+                      &bytes_written, NULL)) {
+    // assume manufacture date unknown (0000-00-00)
+    memset(&battery->mnfctr_date, 0, sizeof battery->mnfctr_date);
   }
 
   bqi.InformationLevel = BatteryInformation;
@@ -636,13 +663,15 @@ wss << borderline <<
       continue;
     }
 
-    wss << "\n\"" << batteries[i].unique_id << "\" at "
+    wss << "\n\"" << batteries[i].unique_id << "\" is at "
         << std::fixed << setprecision(2)
-        << batteries[i].health << "% health " << "(full: "
-        << batteries[i].info.FullChargedCapacity << ", design: "
-        << batteries[i].info.DesignedCapacity << ")\n";
+        << batteries[i].health << "% health\n";
 
     wss << "\n" << BatteryInformationStr(&batteries[i].info).c_str();
+
+    wss << left << setw(BATT_FIELD_WIDTH) << "Manufacture Date: "
+        << right << ManufactureDateStr(&batteries[i].mnfctr_date).c_str()
+        << "\n";
   }
 
   wss << "\nCounted " << batteries_present << " "
