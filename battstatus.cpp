@@ -136,6 +136,10 @@ bool suppress_charge_state;
    as when the computer just woke up. */
 bool suppress_lifetime;
 
+/* There are certain times when SYSTEM_POWER_STATUS error messages should be
+   suppressed, such as when GetSystemPowerStatus fails continuously. */
+bool suppress_sps_errmsgs;
+
 /* time as local time string in format: Tue May 16 03:24:31 PM */
 string TimeToLocalTimeStr(time_t t)
 {
@@ -1238,15 +1242,19 @@ int main(int argc, char *argv[])
 
     if(!GetSystemPowerStatus(&status)) {
       DWORD gle = GetLastError();
-      cerr << "Error: GetSystemPowerStatus() failed, GetLastError(): " << gle
-           << endl;
-      status = prev_status;
-      for(int i = 0; i < 10; ++i) {
-        Sleep(100);
-        PROCESS_WINDOW_MESSAGES();
+      if(!suppress_sps_errmsgs) {
+        cout << TIMESTAMPED_PREFIX
+             << "GetSystemPowerStatus() failed, error " << gle << "."
+             << endl
+             << TIMESTAMPED_PREFIX
+             << "Temporarily suppressing similar error messages." << endl;
+        suppress_sps_errmsgs = true;
       }
+      status = prev_status;
       continue;
     }
+
+    suppress_sps_errmsgs = false;
 
     PROCESS_WINDOW_MESSAGES();
 
