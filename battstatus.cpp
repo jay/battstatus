@@ -123,8 +123,11 @@ using namespace std;
 using namespace std::tr1;
 #endif
 
-unsigned verbose;
+// Command line options, refer to ShowUsage
+bool monitor = true;
 bool prevent_sleep;
+unsigned verbose;
+
 RTL_OSVERSIONINFOW os;
 
 /* There are certain times when the battery charge state should be suppressed,
@@ -1068,7 +1071,7 @@ HWND InitMonitorWindow()
 void ShowUsage()
 {
 cerr <<
-"\nUsage: battstatus [-p] [-v[vv]]\n"
+"\nUsage: battstatus [-n] [-p] [-v[vv]]\n"
 "\n"
 "battstatus monitors your laptop battery for changes in state. By default it "
 "monitors WM_POWERBROADCAST messages and relevant changes in power status.\n"
@@ -1079,6 +1082,8 @@ cerr <<
 "\n"
 "  -vvv\t.. and show all window messages received by the monitor window.\n"
 "\tWindow messages other than WM_POWERBROADCAST are shown by hex.\n"
+"\n"
+"  -n\tNo Monitoring: Show the current status and then quit.\n"
 "\n"
 "  -p\tPrevent Sleep: Prevent the computer from sleeping while monitoring.\n"
 "\tThis option changes the monitor thread's power request state so that the "
@@ -1130,8 +1135,8 @@ int main(int argc, char *argv[])
   for(int i = 1; i < argc; ++i) {
     char *p = argv[i];
     if(!strcmp(p, "--help")) {
-        ShowUsage();
-        exit(1);
+      ShowUsage();
+      exit(1);
     }
     if(*p != '-') {
       cerr << "Error: Option parsing failed, expected '-' : " << p << endl;
@@ -1143,6 +1148,9 @@ int main(int argc, char *argv[])
       case '?':
         ShowUsage();
         exit(1);
+      case 'n':
+        monitor = false;
+        break;
       case 'p':
         prevent_sleep = true;
         break;
@@ -1214,10 +1222,12 @@ int main(int argc, char *argv[])
     cout << endl;
   }
 
-  HWND hwnd = InitMonitorWindow();
-  if(!hwnd) {
-    cerr << "Error: InitMonitorWindow() failed." << endl;
-    exit(1);
+  if(monitor) {
+    HWND hwnd = InitMonitorWindow();
+    if(!hwnd) {
+      cerr << "Error: InitMonitorWindow() failed." << endl;
+      exit(1);
+    }
   }
 
 #if 0 // testing purposes
@@ -1238,6 +1248,16 @@ int main(int argc, char *argv[])
   SYSTEM_POWER_STATUS status = { 0, };
 
   for(;; Sleep(100), prev_status = status) {
+    static bool once = true;
+
+    if(once) {
+      once = false;
+    }
+    else {
+      if(!monitor)
+        break;
+    }
+
     PROCESS_WINDOW_MESSAGES();
 
     if(!GetSystemPowerStatus(&status)) {

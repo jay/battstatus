@@ -5,7 +5,7 @@ battstatus - Monitor the Windows battery status for changes in state
 
 ### Usage
 
-Usage: `battstatus [-p] [-v[vv]]`
+Usage: `battstatus [-n] [-p] [-v[vv]]`
 
 battstatus monitors your laptop battery for changes in state. By default it
 monitors
@@ -20,6 +20,8 @@ messages and relevant changes in
 
   -vvv  .. and show all window messages received by the monitor window.
         Window messages other than WM_POWERBROADCAST are shown by hex.
+
+  -n    No Monitoring: Show the current status and then quit.
 
   -p    Prevent Sleep: Prevent the computer from sleeping while monitoring.
         This option changes the monitor thread's power request state so that
