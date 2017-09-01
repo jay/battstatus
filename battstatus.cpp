@@ -278,7 +278,7 @@ string CapabilitiesStr(ULONG Capabilities)
   stringstream ss;
 #define EXTRACT_CAPABILITIES(flag) \
   if((Capabilities & flag)) { \
-    if(ss.tellp()) \
+    if(ss.tellp() > 0) \
       ss << " | "; \
     ss << #flag; \
     Capabilities &= ~flag; \
@@ -289,7 +289,7 @@ string CapabilitiesStr(ULONG Capabilities)
   EXTRACT_CAPABILITIES(BATTERY_SET_DISCHARGE_SUPPORTED);
   EXTRACT_CAPABILITIES(BATTERY_SYSTEM_BATTERY);
   if(Capabilities) {
-    if(ss.tellp())
+    if(ss.tellp() > 0)
       ss << " | ";
     ss << UndocumentedValueStr(Capabilities);
   }
@@ -714,7 +714,7 @@ string BatteryFlagStr(unsigned BatteryFlag)
   stringstream ss;
 #define EXTRACT_BATTERYFLAG(flag, name) \
   if((BatteryFlag & flag)) { \
-    if(ss.tellp()) \
+    if(ss.tellp() > 0) \
       ss << " | "; \
     ss << name; \
     BatteryFlag &= ~flag; \
@@ -726,7 +726,7 @@ string BatteryFlagStr(unsigned BatteryFlag)
   EXTRACT_BATTERYFLAG(SPSF_BATTERYNOBATTERY, "No system battery");
   EXTRACT_BATTERYFLAG(255, "Unknown status");
   if(BatteryFlag) {
-    if(ss.tellp())
+    if(ss.tellp() > 0)
       ss << " | ";
     ss << UndocumentedValueStr(BatteryFlag);
   }
