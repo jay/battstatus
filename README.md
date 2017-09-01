@@ -58,6 +58,11 @@ is a battery monitor that has a GUI and can graph the battery charge level.
 [Microsoft Powercfg](https://docs.microsoft.com/en-us/windows-hardware/design/device-experiences/powercfg-command-line-options)
 can make a battery status report.
 
+[Microsoft pwrtest](https://docs.microsoft.com/en-us/windows-hardware/drivers/devtest/pwrtest)
+has a /battery option that allows polling the battery status like battstatus.
+It comes with the Windows Driver Kit (WDK) or can be downloaded
+[here](https://github.com/jay/battstatus/releases/download/v1.0/pwrtest.zip).
+
 ### License
 
 battstatus is free software and it is licensed under the
