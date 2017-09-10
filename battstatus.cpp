@@ -1260,21 +1260,38 @@ int main(int argc, char *argv[])
 
     PROCESS_WINDOW_MESSAGES();
 
-    if(!GetSystemPowerStatus(&status)) {
-      DWORD gle = GetLastError();
-      if(!suppress_sps_errmsgs) {
-        cout << TIMESTAMPED_PREFIX
-             << "GetSystemPowerStatus() failed, error " << gle << "."
-             << endl
-             << TIMESTAMPED_PREFIX
-             << "Temporarily suppressing similar error messages." << endl;
-        suppress_sps_errmsgs = true;
-      }
-      status = prev_status;
-      continue;
-    }
+    /* Get the system power status.
+       */
+    {
+      static DWORD sps_errtick;
 
-    suppress_sps_errmsgs = false;
+      if(!GetSystemPowerStatus(&status)) {
+        DWORD gle = GetLastError();
+
+        if(!suppress_sps_errmsgs) {
+          cout << TIMESTAMPED_PREFIX
+               << "GetSystemPowerStatus() failed, error " << gle << "."
+               << endl
+               << TIMESTAMPED_PREFIX
+               << "Temporarily suppressing similar error messages." << endl;
+          suppress_sps_errmsgs = true;
+        }
+
+        sps_errtick = GetTickCount();
+        status = prev_status;
+        continue;
+      }
+
+      /* If more than span_minutes has passed since since the last sps error
+         then stop suppressing sps error messages. */
+      if(suppress_sps_errmsgs) {
+        const unsigned span_minutes = 5;
+        DWORD elapsed_minutes = (GetTickCount() - sps_errtick) / 1000 / 60;
+
+        if(elapsed_minutes > span_minutes)
+          suppress_sps_errmsgs = false;
+      }
+    }
 
     PROCESS_WINDOW_MESSAGES();
 
