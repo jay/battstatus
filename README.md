@@ -5,7 +5,7 @@ battstatus - Monitor the Windows battery status for changes in state
 
 ### Usage
 
-Usage: `battstatus [-n] [-p] [-v[vv]]`
+Usage: `battstatus [-a <minutes>] [-n] [-p] [-v[vv]]`
 
 battstatus monitors your laptop battery for changes in state. By default it
 monitors
@@ -20,6 +20,8 @@ messages and relevant changes in
 
   -vvv  .. and show all window messages received by the monitor window.
         Window messages other than WM_POWERBROADCAST are shown by hex.
+
+  -a    Average Lifetime: Show lifetime as an average of the last <minutes>.
 
   -n    No Monitoring: Show the current status and then quit.
 
@@ -45,6 +47,42 @@ example -pvv is the same as -p -v -v.
 [Wed Aug 02 12:41:50 PM]: 99% remaining
 [Wed Aug 02 12:45:14 PM]: 8 hr 13 min (98%) remaining
 [Wed Aug 02 12:49:39 PM]: 7 hr 37 min (97%) remaining
+~~~
+
+### The 'Average Lifetime' option explained
+
+Windows calculates battery lifetime from the immediate values that are reported
+by the battery. If there is a higher than normal drain on the battery then the
+lifetime will be lower. Over several status reports you may notice lifetime
+discrepancies of up to several hours, but typically an hour or less. For
+example:
+
+~~~
+[Tue Sep 19 05:00:50 PM]: 1 hr 45 min (20%) remaining
+[Tue Sep 19 05:05:44 PM]: 41 min (19%) remaining
+[Tue Sep 19 05:09:48 PM]: 1 hr 32 min (18%) remaining
+[Tue Sep 19 05:15:04 PM]: 1 hr 32 min (17%) remaining
+[Tue Sep 19 05:19:49 PM]: 58 min (16%) remaining
+[Tue Sep 19 05:24:13 PM]: 1 hr 25 min (15%) remaining
+[Tue Sep 19 05:29:08 PM]: 54 min (14%) remaining
+[Tue Sep 19 05:33:33 PM]: 1 hr 07 min (13%) remaining
+~~~
+
+All of those lifetimes are technically accurate since they're based on what the
+battery was reporting at the time. However you may find averaging the lifetime
+gives more accurate readings. For example, `-a 30` would show each lifetime as
+an average of the last 30 minutes of received lifetimes (adjusted for when they
+were received) and you'd see output similar to this:
+
+~~~
+[Tue Sep 19 05:00:50 PM]: 1 hr 34 min (20%) remaining
+[Tue Sep 19 05:05:44 PM]: 1 hr 24 min (19%) remaining
+[Tue Sep 19 05:09:48 PM]: 1 hr 12 min (18%) remaining
+[Tue Sep 19 05:15:04 PM]: 1 hr 15 min (17%) remaining
+[Tue Sep 19 05:19:49 PM]: 1 hr 11 min (16%) remaining
+[Tue Sep 19 05:24:13 PM]: 1 hr 05 min (15%) remaining
+[Tue Sep 19 05:29:08 PM]: 1 hr 04 min (14%) remaining
+[Tue Sep 19 05:33:33 PM]: 57 min (13%) remaining
 ~~~
 
 Other

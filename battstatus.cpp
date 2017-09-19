@@ -124,6 +124,7 @@ using namespace std::tr1;
 #endif
 
 // Command line options, refer to ShowUsage
+unsigned lifetime_span_minutes;
 bool monitor = true;
 bool prevent_sleep;
 unsigned verbose;
@@ -1071,7 +1072,7 @@ HWND InitMonitorWindow()
 void ShowUsage()
 {
 cerr <<
-"\nUsage: battstatus [-n] [-p] [-v[vv]]\n"
+"\nUsage: battstatus [-a <minutes>] [-n] [-p] [-v[vv]]\n"
 "\n"
 "battstatus monitors your laptop battery for changes in state. By default it "
 "monitors WM_POWERBROADCAST messages and relevant changes in power status.\n"
@@ -1082,6 +1083,8 @@ cerr <<
 "\n"
 "  -vvv\t.. and show all window messages received by the monitor window.\n"
 "\tWindow messages other than WM_POWERBROADCAST are shown by hex.\n"
+"\n"
+"  -a\tAverage Lifetime: Show lifetime as an average of the last <minutes>.\n"
 "\n"
 "  -n\tNo Monitoring: Show the current status and then quit.\n"
 "\n"
@@ -1134,20 +1137,56 @@ int main(int argc, char *argv[])
 
   for(int i = 1; i < argc; ++i) {
     char *p = argv[i];
+    const char *errprefix = "Error: Option parsing failed: ";
+
     if(!strcmp(p, "--help")) {
       ShowUsage();
       exit(1);
     }
     if(*p != '-') {
-      cerr << "Error: Option parsing failed, expected '-' : " << p << endl;
+      cerr << errprefix << "Expected '-' : " << p << endl;
       exit(1);
     }
     while(*++p) {
+      const char *value = NULL;
+      bool value_is_optional = !!strchr("", *p);
+      bool value_is_required = !!strchr("a", *p);
+      if(value_is_optional || value_is_required) {
+        if((i + 1) < argc && *argv[i + 1] != '-')
+          value = argv[++i];
+        if(!value && value_is_required) {
+          cerr << errprefix << "Option '" << *p << "' needs a value." << endl;
+          exit(1);
+        }
+      }
       switch(*p) {
       case 'h':
       case '?':
         ShowUsage();
         exit(1);
+      case 'a':
+      {
+        // amount of time that is likely impractical for a lifetime average
+        const unsigned max_minutes = (24 * 60);
+
+        if(!('0' <= *value && *value <= '9')) {
+          cerr << errprefix << "Option 'a' invalid value: " << value << endl;
+          exit(1);
+        }
+
+        lifetime_span_minutes = (unsigned)atoi(value);
+        if(lifetime_span_minutes > max_minutes) {
+          unsigned wait_seconds = 60;
+          cout << TIMESTAMPED_PREFIX
+               << "WARNING: Option 'a' received a value of "
+               << lifetime_span_minutes << " minutes, which is larger than "
+               << max_minutes << " minutes, and is probably impractical. "
+               << "Waiting " << wait_seconds << " seconds before continuing..."
+               << endl;
+          Sleep(wait_seconds * 1000);
+        }
+        break;
+      }
       case 'n':
         monitor = false;
         break;
@@ -1158,7 +1197,7 @@ int main(int argc, char *argv[])
         ++verbose;
         break;
       default:
-        cerr << "Error: Option parsing failed, unknown option: " << *p << endl;
+        cerr << errprefix << "Unknown option: " << *p << endl;
         exit(1);
       }
     }
@@ -1337,7 +1376,7 @@ int main(int argc, char *argv[])
        In order to detect a revival charge, record the current tick count
        each time the charge state changes and then assume revival if
        'max_changes' number of changes occurred within 'span_minutes'. */
-    {
+    if(monitor) {
       const unsigned max_changes = 20;
       const unsigned span_minutes = 30;
       DWORD now = GetTickCount();
@@ -1394,7 +1433,10 @@ int main(int argc, char *argv[])
        wait just a minute to show the lifetime and sometimes it can wait five
        minutes. And those variations do not appear be dependent on percentage,
        which may not have changed in the interim. */
-    {
+
+    bool recently_resumed = false;
+
+    if(monitor) {
       const unsigned span_minutes = 3;
 
       ULONGLONG lastwake;
@@ -1424,6 +1466,7 @@ int main(int argc, char *argv[])
           if(elapsed_minutes < span_minutes) {
             static ULONGLONG prev_lastwake = (ULONGLONG)-1;
 
+            recently_resumed = true;
             suppress_lifetime = !verbose;
 
             if(full_status_shown || prev_lastwake != lastwake) {
@@ -1449,6 +1492,87 @@ int main(int argc, char *argv[])
       }
       else
         suppress_lifetime = false;
+    }
+
+    /* Calculate the average lifetime.
+       Store continuous lifetime values averaged approximately every minute for
+       the last 'lifetime_span_minutes', then compute the average of those
+       values. */
+
+    DWORD average_lifetime = LIFETIME_UNKNOWN;
+
+    if(monitor && lifetime_span_minutes) {
+      struct data { DWORD lifetime /* in seconds */, tick /* in ms */; };
+      struct data now = { status.BatteryLifeTime, GetTickCount() };
+      static deque<data> deck;
+
+      /* If the current lifetime is invalid then assume some major event has
+         occurred and invalidate the previously stored lifetimes. Else store
+         the lifetime and calculate the average lifetime.
+
+         Note it is documented behavior in Windows that lifetimes are reported
+         unknown (ie LIFETIME_UNKNOWN) when AC power is present, therefore it's
+         safe to assume a discharge in the else block. */
+      if(recently_resumed || !now.lifetime || now.lifetime == LIFETIME_UNKNOWN)
+        deck.clear();
+      else {
+        // Remove all entries older than lifetime_span_minutes
+        for(deque<data>::reverse_iterator r = deck.rbegin();
+            r != deck.rend(); ++r) {
+          if((now.tick - r->tick) > (lifetime_span_minutes * 60 * 1000)) {
+            deck.erase(deck.begin(), ((r + 1).base() + 1));
+            break;
+          }
+        }
+
+        /* If a lifetime was already reported in the last minute then fold the
+           current lifetime into that one. This is somewhat imperfect however
+           the alternative is keeping all the lifetimes that occurred within
+           lifetime_span_minutes, which could be a very large amount.
+
+           Note the tick remains unchanged, because if it was updated to the
+           current tick then subsequent iterations would always hit this block
+           instead of the else block. The idea is to create an object about
+           once a minute. */
+        if(deck.size() && (now.tick - deck.back().tick) < (60 * 1000)) {
+          deck.back().lifetime = (DWORD)(((double)deck.back().lifetime / 2) +
+                                         ((double)now.lifetime / 2));
+          if(!deck.back().lifetime)
+            deck.back().lifetime = 1;
+          if(deck.back().lifetime == LIFETIME_UNKNOWN) // can't happen, for now
+            --deck.back().lifetime;
+        }
+        else {
+          /* Make sure there's at least an entry about every minute before
+             adding the current entry. Fill in a gap of 2+ minutes by creating
+             pseudo entries based on the last reported lifetime. The main loop
+             iterates so frequently that this should be highly unlikely. */
+          if(deck.size()) {
+            DWORD elapsed_minutes = (now.tick - deck.back().tick) / 1000 / 60;
+            for(DWORD i = 1; i < elapsed_minutes; ++i) {
+              struct data d = deck.back();
+              d.tick += (60 * 1000);
+              d.lifetime = d.lifetime > 60 ? d.lifetime - 60 : 1;
+              deck.push_back(d);
+            }
+          }
+
+          deck.push_back(now);
+        }
+
+        /* Calculate an unweighted average.
+           Adjust each lifetime based on when it was reported. For example a
+           lifetime of 4400 seconds that was reported 100 seconds ago is
+           actually a lifetime of 4300 seconds. */
+        double avg = 0;
+        for(deque<data>::iterator it = deck.begin(); it != deck.end(); ++it) {
+          DWORD excess_seconds = (now.tick - it->tick) / 1000;
+          DWORD lifetime = it->lifetime > excess_seconds ?
+                           it->lifetime - excess_seconds : 1;
+          avg += (double)lifetime / deck.size();
+        }
+        average_lifetime = (DWORD)avg;
+      }
     }
 
     /* Default monitor mode.
@@ -1507,7 +1631,9 @@ int main(int argc, char *argv[])
     else if(!suppress_lifetime &&
             status.BatteryLifeTime != LIFETIME_UNKNOWN) {
       // eg: 27 min (15%) remaining
-      cout << BatteryLifeTimeStr(status.BatteryLifeTime) << " ("
+      DWORD lifetime = average_lifetime != LIFETIME_UNKNOWN ?
+                       average_lifetime : status.BatteryLifeTime;
+      cout << BatteryLifeTimeStr(lifetime) << " ("
            << BatteryLifePercentStr(status.BatteryLifePercent)
            << ") remaining";
     }
