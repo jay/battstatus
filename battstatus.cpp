@@ -309,7 +309,13 @@ string TechnologyStr(UCHAR Technology)
 
 string ChemistryStr(const UCHAR Chemistry[4])
 {
-  return string((char *)Chemistry, sizeof Chemistry);
+  /* Chemistry is "not necessarily zero-terminated" */
+  int i;
+  for(i = 0; i < 4; ++i) {
+    if(Chemistry[i] == '\0')
+      break;
+  }
+  return string((const char *)Chemistry, i);
 }
 
 string DesignedCapacityStr(ULONG DesignedCapacity,
