@@ -127,6 +127,7 @@ using namespace std::tr1;
 unsigned lifetime_span_minutes;
 bool monitor = true;
 bool prevent_sleep;
+bool console_title;
 unsigned verbose;
 
 RTL_OSVERSIONINFOW os;
@@ -1101,6 +1102,9 @@ cerr <<
 "manual sleep initiated by the user when unplugged and running on battery "
 "power.\n"
 "\n"
+"  -w\tWindow Title: Show current status in the window title.\n"
+"\tThe original title is restored when battstatus terminates.\n"
+"\n"
 "Options combined into a single argument are the same as separate options, "
 "for example -pvv is the same as -p -v -v.\n"
 "\n"
@@ -1201,6 +1205,9 @@ int main(int argc, char *argv[])
         break;
       case 'v':
         ++verbose;
+        break;
+      case 'w':
+        console_title = true;
         break;
       default:
         cerr << errprefix << "Unknown option: " << *p << endl;
@@ -1607,15 +1614,16 @@ int main(int argc, char *argv[])
 
     /* The status has changed enough to show the one-liner output. */
 
-    cout << TIMESTAMPED_PREFIX;
+    stringstream line;
+    line << TIMESTAMPED_PREFIX;
     // Show the status in the same formats that the battery systray uses
     if(NO_BATTERY(status)) {
       // eg: No battery is detected
-      cout << "No battery is detected";
+      line << "No battery is detected";
     }
     else if(suppress_charge_state) {
       // eg: 100% remaining
-      cout << BatteryLifePercentStr(status.BatteryLifePercent) << " remaining";
+      line << BatteryLifePercentStr(status.BatteryLifePercent) << " remaining";
     }
     else if(status.BatteryLifePercent == 100 &&
             (suppress_lifetime ||
@@ -1624,12 +1632,12 @@ int main(int argc, char *argv[])
             !CHARGING(status) &&
             !GetBatteryPowerRate()) {
       // eg: Fully charged (100%)
-      cout << "Fully charged (" << BatteryLifePercentStr(100) << ")";
+      line << "Fully charged (" << BatteryLifePercentStr(100) << ")";
     }
     else if(CHARGING(status) || PLUGGED_IN(status)) {
       // eg: 100% available (plugged in, charging)
       // eg: 99% available (plugged in, not charging)
-      cout << BatteryLifePercentStr(status.BatteryLifePercent)
+      line << BatteryLifePercentStr(status.BatteryLifePercent)
            << (GetBatteryPowerRate() < 0 ? " remaining" : " available") << " ("
            << (PLUGGED_IN(status) ? "" : "not ") << "plugged in, "
            << (CHARGING(status) ? "" : "not ") << "charging)";
@@ -1639,14 +1647,16 @@ int main(int argc, char *argv[])
       // eg: 27 min (15%) remaining
       DWORD lifetime = average_lifetime != LIFETIME_UNKNOWN ?
                        average_lifetime : status.BatteryLifeTime;
-      cout << BatteryLifeTimeStr(lifetime) << " ("
+      line << BatteryLifeTimeStr(lifetime) << " ("
            << BatteryLifePercentStr(status.BatteryLifePercent)
            << ") remaining";
     }
     else {
       // eg: 100% remaining
-      cout << BatteryLifePercentStr(status.BatteryLifePercent) << " remaining";
+      line << BatteryLifePercentStr(status.BatteryLifePercent) << " remaining";
     }
-    cout << endl;
+    cout << line.str() << endl;
+    if(console_title)
+      SetConsoleTitle(line.str().c_str());
   }
 }
