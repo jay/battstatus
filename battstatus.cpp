@@ -1615,7 +1615,7 @@ int main(int argc, char *argv[])
     /* The status has changed enough to show the one-liner output. */
 
     stringstream line;
-    line << TIMESTAMPED_PREFIX;
+    cout << TIMESTAMPED_PREFIX;
     // Show the status in the same formats that the battery systray uses
     if(NO_BATTERY(status)) {
       // eg: No battery is detected
