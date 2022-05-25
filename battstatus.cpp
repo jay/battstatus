@@ -1243,8 +1243,8 @@ int main(int argc, char *argv[])
   /* in verbose mode show all SYSTEM_BATTERY_STATE members */
   if(verbose) {
     SYSTEM_BATTERY_STATE sbs = { 0, };
-    NTSTATUS ntstatus = CallNtPowerInformation(SystemBatteryState,
-                                               NULL, 0, &sbs, sizeof sbs);
+    ntstatus = CallNtPowerInformation(SystemBatteryState,
+                                      NULL, 0, &sbs, sizeof sbs);
     if(ntstatus == STATUS_SUCCESS) {
       cout << TIMESTAMPED_HEADER;
       ShowBatteryState(&sbs);
@@ -1453,8 +1453,8 @@ int main(int argc, char *argv[])
       const unsigned span_minutes = 3;
 
       ULONGLONG lastwake;
-      NTSTATUS ntstatus = CallNtPowerInformation(LastWakeTime, NULL, 0,
-                                                 &lastwake, sizeof lastwake);
+      ntstatus = CallNtPowerInformation(LastWakeTime, NULL, 0,
+                                        &lastwake, sizeof lastwake);
       if(ntstatus == STATUS_SUCCESS) {
         static ULONGLONG ignore_this_waketime = (ULONGLONG)-1;
 
