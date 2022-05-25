@@ -15,7 +15,7 @@ It can optionally show verbose information and prevent sleep. Use option --help
 to see the usage information.
 
 To build using Visual Studio 2008 (with TR1 support) or later:
-cl /W4 /wd4127 battstatus.cpp user32.lib powrprof.lib setupapi.lib
+cl /W4 /wd4127 /wd4530 battstatus.cpp user32.lib powrprof.lib setupapi.lib
 
 To build using MinGW or MinGW-w64:
 g++ -Wall -std=gnu++11 -o battstatus battstatus.cpp -lpowrprof -lsetupapi -luuid
@@ -99,8 +99,19 @@ GNU General Public License for more details.
 #define SPSF_BATTERYNOBATTERY 128
 #endif
 
+/* The battery saver status is available since Windows 10. It's stored in
+   member SystemStatusFlag but older headers use the name Reserved1. */
+#if defined(__MINGW64_VERSION_MAJOR) || \
+    !defined(SYSTEM_STATUS_FLAG_POWER_SAVING_ON)
+#define SystemStatusFlag Reserved1
+#endif
+#ifndef SYSTEM_STATUS_FLAG_POWER_SAVING_ON
+#define SYSTEM_STATUS_FLAG_POWER_SAVING_ON 1
+#endif
+
 // Bool macros for SYSTEM_POWER_STATUS
-#define BATTSAVER(status)   ((status).Reserved1 == 1)
+#define BATTSAVER(status)   \
+  ((status).SystemStatusFlag == SYSTEM_STATUS_FLAG_POWER_SAVING_ON)
 #define CHARGING(status)    (!!((status).BatteryFlag & SPSF_BATTERYCHARGING))
 #define NO_BATTERY(status)  (!!((status).BatteryFlag & SPSF_BATTERYNOBATTERY))
 #define PLUGGED_IN(status)  ((status).ACLineStatus == 1)
@@ -815,7 +826,7 @@ void ShowPowerStatus(const SYSTEM_POWER_STATUS *status)
   SHOW_STATUS(BatteryLifePercent);
   if(os.dwMajorVersion >= 10) { /* SystemStatusFlag was added in Windows 10 */
     cout << left << setw(BATT_FIELD_WIDTH) << "SystemStatusFlag: "
-         << right << SystemStatusFlagStr(status->Reserved1) << "\n";
+         << right << SystemStatusFlagStr(status->SystemStatusFlag) << "\n";
   }
   SHOW_STATUS(BatteryLifeTime);
   SHOW_STATUS(BatteryFullLifeTime);
@@ -833,7 +844,7 @@ enum cpstype ComparePowerStatus(const SYSTEM_POWER_STATUS *a,
   COMPARE_STATUS(ACLineStatus);
   COMPARE_STATUS(BatteryFlag);
   COMPARE_STATUS(BatteryLifePercent);
-  COMPARE_STATUS(Reserved1); // aka SystemStatusFlag
+  COMPARE_STATUS(SystemStatusFlag);
   COMPARE_STATUS(BatteryLifeTime);
   COMPARE_STATUS(BatteryFullLifeTime);
   return CPS_EQUAL;
@@ -1594,14 +1605,12 @@ int main(int argc, char *argv[])
        Note battery percent remaining is compared instead of lifetime
        since the latter is volatile and could cause a lot of updates. */
 
-    /* Check if the battery saver status has changed.
-       The battery saver status is available since Windows 10. It's stored in
-       member SystemStatus but older headers use the name Reserved1. */
+    /* Check if the battery saver status has changed. (Windows 10+) */
     if(!suppress_charge_state &&
        os.dwMajorVersion >= 10 &&
        BATTSAVER(status) != BATTSAVER(prev_status)) {
       cout << TIMESTAMPED_PREFIX
-           << SystemStatusFlagStr(status.Reserved1) << endl;
+           << SystemStatusFlagStr(status.SystemStatusFlag) << endl;
     }
 
     if(!full_status_shown &&
