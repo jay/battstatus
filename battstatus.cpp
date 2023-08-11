@@ -1140,8 +1140,10 @@ int main(int argc, char *argv[])
   }
 
   /* NtQueryTimerResolution retrieves the OS timer resolutions as 100ns units
-     of interrupt. Note that the minimum timer resolution is equal to the
-     maximum timer interval, and vice versa. */
+     of interrupt. For example: min 156250, max 5000, actual 10003.
+     The minimum timer resolution is the lowest resolution and is the highest
+     value. It's equal to the maximum timer interval and is usually 15.6 ms.
+     */
   NTSTATUS (NTAPI *NtQueryTimerResolution)(ULONG *MinimumResolution,
                                            ULONG *MaximumResolution,
                                            ULONG *ActualResolution) =
